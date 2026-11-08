@@ -1,0 +1,8 @@
+[Unit]
+Description=Публикация рабочих пультов на __DOMAIN__/work
+StartLimitIntervalSec=0
+[Service]
+Type=oneshot
+# Syncthing кладёт файлы пачкой — пауза, чтобы взять уже свежие
+ExecStartPre=/bin/sleep 8
+ExecStart=/usr/local/bin/work-publish.py

@@ -1,0 +1,6 @@
+[Unit]
+Description=Следит за папкой рабочего пульта
+[Path]
+PathChanged=__WORKDIR__/__ПАПКА_РАБОЧЕГО_ПУЛЬТА__
+[Install]
+WantedBy=multi-user.target
