@@ -4,6 +4,7 @@
 import json, os, queue, re, subprocess, threading, time, urllib.parse, urllib.request, uuid
 from datetime import datetime, timedelta
 import docs  # PDF-копии офисных файлов и подписание (docs.py рядом)
+import reminders  # напоминания на точное время (reminders.py рядом)
 
 TOKEN = os.environ["TG_TOKEN"]
 ALLOWED = {int(x) for x in os.environ.get("TG_ALLOWED", "").split(",") if x.strip()}
@@ -54,7 +55,7 @@ SYSTEM = (
     "Голосовые бот переводит в текст автоматически: возможны ошибки распознавания, имена сверяй со словарём написаний. "
     "Команды оболочки (Bash) в этом режиме недоступны: работай инструментами чтения, записи и поиска файлов и веба. "
     "Если задача требует команд (скрипты, сложная обработка), скажи об этом — пользователь сделает её в VS Code. "
-    + DOCS_NOTE +
+    + DOCS_NOTE + reminders.system_note() +
     "Почта пользователя __GMAIL__: важные письма за последние дни лежат в "
     "__ПАПКА_АГЕНТА__/07_Важные письма/ГГГГ-ММ.md (отправитель, тема, суть, Message-ID, начало текста). "
     "Отправка писем из бота РАБОТАЕТ (Gmail SMTP, проверено __ДАТА_ПОПОЛНЕНИЯ__). Не говори, что инструмента для почты нет, "
@@ -305,7 +306,8 @@ def run_agent(chat, prompt, target=None):
     stop = threading.Event()
     threading.Thread(target=typing, args=(chat, stop), daemon=True).start()
     try:
-        text = run_codex(chat, prompt) if engine == "codex" else run_claude(chat, prompt)
+        stamped = f"{reminders.stamp()}\n{prompt}"  # агенту нужно точное время для напоминаний
+        text = run_codex(chat, stamped) if engine == "codex" else run_claude(chat, stamped)
     except subprocess.TimeoutExpired:
         return send(chat, f"{NAMES[engine]} думал дольше 20 минут, остановил. Попробуйте разбить задачу на части.")
     finally:
@@ -498,13 +500,16 @@ HELP = ("📋 Команды\n"
         "/limits — сколько лимита подписки Claude израсходовано\n"
         "/claude — отвечает Claude\n"
         "/codex — отвечает Codex (свой лимит, подписка ChatGPT)\n"
-        "/status (или слово «статус») — статус системы: службы, разборы, лимиты\n\n"
+        "/status (или слово «статус») — статус системы: службы, разборы, лимиты\n"
+        "/reminders (или слово «напоминания») — список напоминаний, отменить кнопкой\n\n"
         "Без команд:\n"
         "• текст, голосовые, фото и файлы — просто присылайте;\n"
         "• «Ответить» (свайп) на ответ агента — продолжить тот диалог, где он написан;\n"
+        "• «напомни завтра в 9 позвонить в банк» — бот пришлёт напоминание в этот чат;\n"
         "• «да» / «нет» — отправить или отменить черновик письма.")
 COMMANDS = [("help", "список команд"), ("new", "новый чат"), ("limits", "лимиты подписки Claude"),
-            ("claude", "отвечает Claude"), ("codex", "отвечает Codex"), ("status", "статус системы")]
+            ("claude", "отвечает Claude"), ("codex", "отвечает Codex"), ("status", "статус системы"),
+            ("reminders", "напоминания")]
 
 
 def deliver(chat, text, engine):
@@ -522,6 +527,10 @@ def deliver(chat, text, engine):
         draft = {"to": hdr.get("To", ""), "subject": hdr.get("Subject", ""),
                  "reply_to": hdr.get("In-Reply-To", ""), "body": m.group(2).strip()}
         text = (text[:m.start()] + text[m.end():]).strip()
+    rem_new = re.findall(r"^REMIND[ \t]*\n(.*?)\nEND_REMIND[ \t]*$", text, flags=re.S | re.M)
+    rem_del = re.findall(r"^REMIND_CANCEL[ \t]*\n(.*?)\nEND_REMIND_CANCEL[ \t]*$", text, flags=re.S | re.M)
+    text = re.sub(r"^REMIND_CANCEL[ \t]*\n.*?\nEND_REMIND_CANCEL[ \t]*$\n?", "", text, flags=re.S | re.M)
+    text = re.sub(r"^REMIND[ \t]*\n.*?\nEND_REMIND[ \t]*$\n?", "", text, flags=re.S | re.M).strip()
     sign_blocks = re.findall(r"SIGN_DOC\s*\n(.*?)\nEND_SIGN", text, flags=re.S)
     text = re.sub(r"SIGN_DOC\s*\n.*?\nEND_SIGN", "", text, flags=re.S).strip()
     chatlog(f"агент ({NAMES[engine]})", text + "".join(f"\n(файл: {p})" for p in paths))
@@ -544,6 +553,47 @@ def deliver(chat, text, engine):
             send(chat, f"Файл не найден: {path}")
     for block in sign_blocks:
         sign_document(chat, block)
+    for block in rem_del:
+        note = reminders.cancel(chat, block)
+        chatlog("бот", note); send(chat, note)
+    for block in rem_new:
+        note, rid = reminders.add(chat, block)
+        chatlog("бот", note)
+        kb = {"inline_keyboard": [[{"text": "🗑 Отменить", "callback_data": f"rm:del:{rid}"}]]} if rid else None
+        send_markup(chat, note, kb)
+
+
+def send_markup(chat, text, kb=None):
+    """Простое сообщение с кнопками. Возвращает номер сообщения или None."""
+    data = {"chat_id": chat, "text": text[:4000], "disable_web_page_preview": "true"}
+    if kb:
+        data["reply_markup"] = json.dumps(kb, ensure_ascii=False)
+    try:
+        return api("sendMessage", data)["result"]["message_id"]
+    except Exception as e:
+        log("send_markup error", e)
+
+
+def reminder_loop():
+    """Раз в 20 секунд: прислать напоминания, которым пора. Пропущенные, пока бот лежал, придут сразу."""
+    while True:
+        try:
+            for r, again in reminders.due():
+                late = (reminders.now() - datetime.fromisoformat(r["snooze"] or r["at"])).total_seconds() / 60
+                head = "🔁 Напоминаю ещё раз" if again else "⏰ Напоминание"
+                tail = f"\n(опоздал на {int(late)} мин: бот был недоступен)" if late > 5 and not again else ""
+                if r.get("msg") and again:
+                    try:  # кнопки только под последним повтором
+                        api("editMessageReplyMarkup", {"chat_id": r["chat"], "message_id": r["msg"]}, timeout=10)
+                    except Exception:
+                        pass
+                mid = send_markup(r["chat"], f"{head}\n{r['text']}{tail}", reminders.buttons(r))
+                if mid:
+                    reminders.set_msg(r["id"], r["at"], mid)
+                chatlog("бот", f"напоминание: {r['text']}")
+        except Exception as e:
+            log("reminder loop error", repr(e))
+        time.sleep(20)
 
 
 def send_email(chat, d):
@@ -715,14 +765,49 @@ def handle_callback(cb):
     except Exception as e:
         log("answerCallbackQuery error", e)
     chat = (cb.get("message") or {}).get("chat", {}).get("id")
-    if cb.get("data") == "new" and chat:
+    data = str(cb.get("data", ""))
+    if data == "new" and chat:
         new_dialog(chat)
+    elif data.startswith("rm:") and chat:
+        reminder_button(chat, cb.get("message") or {}, data.split(":")[1:])
     elif str(cb.get("data", "")).startswith("st:") and chat:
         action = cb["data"][3:]
         if action in ("run_chatgpt", "run_vk", "conflicts"):
             chatlog("я", f"кнопка статуса: {action}")
             r = subprocess.run(["/usr/bin/python3", STATUS_PY, action], capture_output=True, text=True, timeout=60)
             send(chat, (r.stdout or r.stderr or "Нет ответа от скрипта").strip())
+
+
+def reminder_button(chat, msg, parts):
+    """Кнопки напоминаний: rm:ok:<id>:<срабатывание>, rm:sn:<id>:<срабатывание>:<минут>, rm:del:<id>."""
+    action, rid = parts[0], parts[1] if len(parts) > 1 else ""
+    occ = parts[2] if len(parts) > 2 else ""
+    if action == "ok":
+        note = reminders.done(rid, occ)
+    elif action == "sn":
+        note = reminders.snooze(rid, occ, int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 10)
+    elif action == "del":
+        r = reminders.cancel_id(rid)
+        note = f"🗑 Отменил: {r['text']}" if r else "Уже отменено или выполнено."
+    else:
+        return
+    chatlog("я", f"кнопка напоминания: {note}")
+    if action == "del" and msg.get("text", "").startswith("⏰ Напоминания"):
+        text, kb = reminders.listing(chat)  # нажали в списке — обновить список
+        try:
+            return api("editMessageText", {"chat_id": chat, "message_id": msg["message_id"], "text": text,
+                                           **({"reply_markup": json.dumps(kb, ensure_ascii=False)} if kb else {})})
+        except Exception as e:
+            log("reminder list edit error", e)
+    try:  # убрать кнопки и дописать итог под тем же сообщением
+        api("editMessageText", {"chat_id": chat, "message_id": msg["message_id"],
+                                "text": f"{msg.get('text', '')}\n\n{note}"[:4000]}, timeout=10)
+    except Exception as e:
+        log("reminder edit error", e)
+        send(chat, note)
+
+
+REMINDER_WORDS = {"напоминания", "мои напоминания", "список напоминаний", "какие напоминания"}
 
 
 SKIP_KEYS = {"from", "chat", "date", "message_id", "file_id", "file_unique_id", "thumbnail", "thumb", "edit_date"}
@@ -762,6 +847,10 @@ def handle(msg):
                           "Другой агент этот разговор не видит: важное, что решили, лежит в файлах.")
     if text.startswith("/new"):
         return new_dialog(chat)
+    if text.startswith("/reminders") or text.strip().lower().strip(".!?") in REMINDER_WORDS:
+        chatlog("я", text)
+        body, kb = reminders.listing(chat)
+        return send_markup(chat, body, kb)
     if text.startswith("/status") or text.strip().lower().strip(".!?") in STATUS_WORDS:
         chatlog("я", text)
         return system_status(chat)
@@ -824,6 +913,7 @@ def main():
         log("setMyCommands error", e)
     threading.Thread(target=worker, daemon=True).start()
     threading.Thread(target=flush_groups, daemon=True).start()
+    threading.Thread(target=reminder_loop, daemon=True).start()
     off_file = f"{BASE}/offset"
     try:
         offset = int(open(off_file).read())
