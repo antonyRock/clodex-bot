@@ -1,0 +1,7 @@
+[Unit]
+Description=Check outgoing SMTP every 30 min until opened
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+[Install]
+WantedBy=timers.target

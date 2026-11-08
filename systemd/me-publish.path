@@ -1,0 +1,6 @@
+[Unit]
+Description=Следит за папкой личного пульта
+[Path]
+PathChanged=__WORKDIR__/__ПАПКА_АГЕНТА__/20_Личный пульт
+[Install]
+WantedBy=multi-user.target

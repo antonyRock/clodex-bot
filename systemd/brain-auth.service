@@ -1,0 +1,8 @@
+[Unit]
+Description=Brain site login
+After=network.target
+[Service]
+ExecStart=/usr/bin/python3 /root/brain-auth/auth.py
+Restart=always
+[Install]
+WantedBy=multi-user.target

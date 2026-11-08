@@ -1,0 +1,11 @@
+[Unit]
+Description=Remind user to send bank statements after salary (Telegram)
+[Service]
+Type=oneshot
+WorkingDirectory=/root/tg-bot
+EnvironmentFile=/root/.config/mail.env
+EnvironmentFile=/root/.config/tg-bot.env
+Environment=TG_ALLOWED=__TG_ID__
+Environment=HOME=/root
+ExecStart=/usr/bin/python3 /root/tg-bot/statement_nudge.py
+TimeoutStartSec=120

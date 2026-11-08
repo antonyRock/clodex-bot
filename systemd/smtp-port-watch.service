@@ -1,0 +1,5 @@
+[Unit]
+Description=Check if VDSina opened outgoing SMTP
+[Service]
+Type=oneshot
+ExecStart=/root/tg-bot/smtp_port_watch.sh

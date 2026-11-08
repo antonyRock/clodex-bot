@@ -1,0 +1,7 @@
+[Unit]
+Description=Guard of cloud agent (daily)
+[Service]
+Type=oneshot
+EnvironmentFile=/root/.config/tg-bot.env
+Environment=TG_ALLOWED=__TG_ID__
+ExecStart=/usr/bin/python3 /root/tg-bot/guard.py daily

@@ -1,0 +1,8 @@
+[Unit]
+Description=Question of the day: random time 11:00-18:00 MSK
+[Timer]
+OnCalendar=*-*-* 11:00:00
+RandomizedDelaySec=7h
+Persistent=false
+[Install]
+WantedBy=timers.target

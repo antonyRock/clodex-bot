@@ -1,0 +1,7 @@
+[Unit]
+Description=Mail watcher 12/15/18/21 (утро — в сводке 08:00)
+[Timer]
+OnCalendar=*-*-* 12,15,18,21:00:00
+Persistent=false
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Morning brief 08:00 MSK every day
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+[Install]
+WantedBy=timers.target

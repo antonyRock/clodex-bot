@@ -1,0 +1,7 @@
+[Unit]
+Description=Guard daily check 10:00 (Tue-Sun, only problems)
+[Timer]
+OnCalendar=Tue..Sun *-*-* 10:00:00
+Persistent=true
+[Install]
+WantedBy=timers.target

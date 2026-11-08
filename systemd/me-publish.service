@@ -1,0 +1,5 @@
+[Unit]
+Description=Публикация личного пульта на __DOMAIN__/me
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/me-publish.py

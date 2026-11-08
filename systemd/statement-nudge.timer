@@ -1,0 +1,7 @@
+[Unit]
+Description=Daily 19:30 MSK: bank statement reminder check
+[Timer]
+OnCalendar=*-*-* 19:30:00
+Persistent=true
+[Install]
+WantedBy=timers.target
