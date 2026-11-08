@@ -2,14 +2,15 @@
 """Пересборка пультов после ответа агента в боте.
 
 Агенту в боте запускать программы нельзя (нет Bash), поэтому пульты пересобирает сам бот:
-до задачи запоминает файлы базы задач, после — сравнивает; изменились → проверка задач
+до задачи запоминает файлы базы задач и финансов, после — сравнивает; изменились → проверка задач
 (она же пересобирает личный пульт), затем сборки рабочих пультов, затем публикация на сайт.
 """
 import hashlib, json, os, subprocess, sys
 
 WORKDIR = "__WORKDIR__"
 WATCH = [os.path.join(WORKDIR, "01_Главный контекст", "05_Задачи"),
-         os.path.join(WORKDIR, "03_Проекты", "00_Реестр проектов.md")]
+         os.path.join(WORKDIR, "03_Проекты", "00_Реестр проектов.md"),
+         os.path.join(WORKDIR, "02_Глубокий контекст", "07_Деньги_и_бизнес", "02_Финансы")]   # оплаты, подписки → личный пульт
 CHECK = os.path.join(WORKDIR, "04_Системные файлы", "__ФАЙЛ_ПРОВЕРКИ_ЗАДАЧ__")
 BUILDS = [os.path.join(WORKDIR, p) for p in json.loads('__СБОРКИ_ПУЛЬТОВ__')]   # по порядку
 PY = "/usr/bin/python3"   # как у сводки и сторожа
@@ -20,7 +21,7 @@ def snapshot():
     """Хэши файлов базы задач и реестра проектов: путь → sha256."""
     out = {}
     for w in WATCH:
-        files = [w] if os.path.isfile(w) else [os.path.join(w, f) for f in sorted(os.listdir(w)) if f.endswith(".md")] if os.path.isdir(w) else []
+        files = [w] if os.path.isfile(w) else [os.path.join(w, f) for f in sorted(os.listdir(w)) if f.endswith((".md", ".csv"))] if os.path.isdir(w) else []
         for f in files:
             try:
                 out[f] = hashlib.sha256(open(f, "rb").read()).hexdigest()
