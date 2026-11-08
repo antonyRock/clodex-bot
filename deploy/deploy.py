@@ -94,6 +94,9 @@ def main():
         run("systemctl", "reload", "nginx")
     if "auth" in parts:
         run("systemctl", "restart", "brain-auth")
+    if any(rel.endswith(("health_ingest.py", "health-ingest.service")) for rel, _ in changes):
+        run("systemctl", "enable", "health-ingest")
+        run("systemctl", "restart", "health-ingest")
     if "bot" in parts or "systemd" in parts:
         run("systemctl", "restart", "tg-bot")   # остальные скрипты запускаются таймерами — подхватят сами
     time.sleep(3)

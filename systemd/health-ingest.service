@@ -1,0 +1,8 @@
+[Unit]
+Description=Apple Health data receiver (Health Auto Export)
+After=network.target
+[Service]
+ExecStart=/usr/bin/python3 /root/tg-bot/health_ingest.py
+Restart=always
+[Install]
+WantedBy=multi-user.target
