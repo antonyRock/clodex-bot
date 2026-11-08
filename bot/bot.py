@@ -770,6 +770,8 @@ def handle_callback(cb):
         new_dialog(chat)
     elif data.startswith("rm:") and chat:
         reminder_button(chat, cb.get("message") or {}, data.split(":")[1:])
+    elif data.startswith("pf:") and chat:
+        checkup_button(chat, cb.get("message") or {}, data.split(":")[1:])
     elif str(cb.get("data", "")).startswith("st:") and chat:
         action = cb["data"][3:]
         if action in ("run_chatgpt", "run_vk", "conflicts"):
@@ -804,6 +806,23 @@ def reminder_button(chat, msg, parts):
                                 "text": f"{msg.get('text', '')}\n\n{note}"[:4000]}, timeout=10)
     except Exception as e:
         log("reminder edit error", e)
+        send(chat, note)
+
+
+def checkup_button(chat, msg, parts):
+    """Кнопки регулярных осмотров (checkups.py): pf:<ok|bk|mo|off>:<ключ>. Итог — под тем же сообщением."""
+    try:
+        import checkups
+        note = checkups.press(parts[0], parts[1]) if len(parts) > 1 else "Не понял кнопку."
+    except Exception as e:
+        log("checkup button error", repr(e))
+        note = "⚠️ Не смог записать — скажите агенту словами."
+    chatlog("я", f"кнопка осмотра: {note}")
+    try:
+        api("editMessageText", {"chat_id": chat, "message_id": msg["message_id"],
+                                "text": f"{msg.get('text', '')}\n\n{note}"[:4000]}, timeout=10)
+    except Exception as e:
+        log("checkup edit error", e)
         send(chat, note)
 
 

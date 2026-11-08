@@ -267,6 +267,11 @@ if __name__ == "__main__":
         json.dump({"date": date.today().isoformat(), "message_id": r["result"]["message_id"], "items": items},
                   open(LAST, "w"), ensure_ascii=False)
         print("отправлено, пунктов:", len(items))
+        try:  # регулярные осмотры: подошёл срок — отдельное сообщение с кнопками, не чаще раза в неделю (checkups.py)
+            import checkups
+            print("осмотры:", checkups.notify(TOKEN, CHAT))
+        except Exception as e:
+            print("checkups:", repr(e))
     except Exception as e:
         traceback.print_exc()
         try:
