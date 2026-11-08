@@ -125,9 +125,15 @@ def write_summary(daily):
         ws = daily[d].get("_workouts", [])
         row.append("; ".join(f"{w['name']} {w['min']} мин" for w in ws))
         lines.append("| " + " | ".join(row) + " |")
+    try:                                   # раздел «Заметки» пишет агент — сохранить его
+        old = open(SUMMARY).read()
+        i = old.find("\n## Заметки")
+        tail = old[i:] if i >= 0 else ""
+    except FileNotFoundError:
+        tail = ""
     os.makedirs(os.path.dirname(SUMMARY), exist_ok=True)
     tmp = SUMMARY + ".tmp"
-    open(tmp, "w").write("\n".join(lines) + "\n")
+    open(tmp, "w").write("\n".join(lines) + "\n" + tail)
     os.replace(tmp, SUMMARY)
 
 
