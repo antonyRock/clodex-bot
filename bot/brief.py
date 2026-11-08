@@ -236,6 +236,13 @@ def build(send_it):
         tasks = guard.pending_tasks() or []
         if tasks:
             lines.append(f"📋 Задачи системы и агента: {len(tasks)} открытых")
+    try:  # баланс трёх опор за 7 дней (balance.py, без ИИ): строка всегда, подсказка — только при перекосе
+        import balance
+        b = balance.compute()
+        balance.write(b)
+        lines += ["", balance.line(b)] + ([b["verdict"]] if b["skew"] else [])
+    except Exception as e:
+        print("balance:", repr(e))
     if note:
         lines += ["", note]
     if n:

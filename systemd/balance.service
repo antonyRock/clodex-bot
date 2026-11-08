@@ -1,0 +1,8 @@
+[Unit]
+Description=Balance of three pillars: work, personal, system (time with the agent, last 7 days)
+[Service]
+Type=oneshot
+WorkingDirectory=/root/tg-bot
+Environment=HOME=/root
+ExecStart=/usr/bin/python3 /root/tg-bot/balance.py
+TimeoutStartSec=300
