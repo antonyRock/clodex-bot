@@ -287,9 +287,10 @@ def main():
     once = os.environ.get('REVIEW_ONCE') == '1'
     s = update(status='running', pid=os.getpid(), started_msk=now(), stop_reason=None, executor=EXECUTOR)
     base = snapshot(f'Снимок перед запуском ({EXECUTOR}), {now()}')
-    journal(f'Запущен исполнитель {EXECUTOR}; проверка каждой {CHECK_EVERY}-й партии — {CHECKER_MODEL}; при лимите — пауза и повтор. Снимок досье: {base or "без изменений"}.')
+    check_txt = f'проверка каждой {CHECK_EVERY}-й партии — {CHECKER_MODEL}' if CHECK_EVERY > 0 else 'без проверки'
+    journal(f'Запущен исполнитель {EXECUTOR}; {check_txt}; при лимите — пауза и повтор. Снимок досье: {base or "без изменений"}.')
     if not once:
-        send(f'Запущено: исполнитель {EXECUTOR}, проверка — {CHECKER_MODEL} каждые {CHECK_EVERY} партий.\nСейчас: {progress(s)}.\nОстановить: файл СТОП в папке разбора.')
+        send(f'Запущено: исполнитель {EXECUTOR}, {check_txt}.\nСейчас: {progress(s)}.\nОстановить: файл СТОП в папке разбора.')
     fails = 0; paused = False; prev_grave = s.get('last_check_grave', 0); retry = False
     while s['next_no'] <= len(QUEUE):
         if (TASK / 'СТОП').exists():
@@ -394,7 +395,7 @@ def main():
         journal(f'Партия {bno:04d} ({EXECUTOR}, git {(commit or "-")[:8]}): {ids[0]}–{ids[-1]}, всего {stop}/{len(QUEUE)} фрагментов, {len(user_done)}/{s["user_messages_total"]} сообщений пользователя; факт-записей +{result["facts_added"]}; карточек оборудования {len(result["equipment_cards_updated"])}; Культура: +{result["culture_added"]} в базу. {result["summary"]}')
         print(json.dumps({'time': now(), 'batch': bno, 'segments_done': stop, 'total': len(QUEUE), 'next': s['next_segment']}, ensure_ascii=False), flush=True)
 
-        if EXECUTOR != 'codex' and (once or bno % CHECK_EVERY == 0):
+        if EXECUTOR != 'codex' and CHECK_EVERY > 0 and (once or bno % CHECK_EVERY == 0):
             while True:
                 cst, cout, cerr = check_batch(bno, ids, blocks, commit, run)
                 if cst != 'limit': break

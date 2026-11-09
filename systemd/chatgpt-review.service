@@ -1,5 +1,5 @@
 [Unit]
-Description=ChatGPT archive semantic review with durable checkpoints (Claude executor + Sonnet check)
+Description=ChatGPT archive semantic review with durable checkpoints (Claude executor, optional Sonnet check)
 After=network-online.target
 Wants=network-online.target
 
@@ -16,7 +16,8 @@ Environment=PYTHONUNBUFFERED=1
 # Исполнитель: opus (решение владельца 2026-11-09), haiku, sonnet или codex — для отката
 Environment=REVIEW_EXECUTOR=opus
 Environment=REVIEW_CHECKER=sonnet
-Environment=REVIEW_CHECK_EVERY=20
+# 0 — без проверки (решение владельца 2026-11-09: Opus без проверки Sonnet)
+Environment=REVIEW_CHECK_EVERY=0
 UMask=0077
 Nice=10
 Restart=no
