@@ -1,0 +1,26 @@
+[Unit]
+Description=ChatGPT archive semantic review with durable checkpoints (Haiku + Sonnet check)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKDIR__
+ExecStart=/usr/bin/python3 /root/night/chatgpt_review.py
+EnvironmentFile=/root/.config/tg-bot.env
+EnvironmentFile=/root/.config/claude-token
+Environment=TG_CHAT=__TG_ID__
+Environment=HOME=/root
+Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+# Исполнитель: haiku (по умолчанию) или codex — для отката на прежний вариант
+Environment=REVIEW_EXECUTOR=haiku
+Environment=REVIEW_CHECKER=sonnet
+Environment=REVIEW_CHECK_EVERY=20
+UMask=0077
+Nice=10
+Restart=no
+TimeoutStopSec=30
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
