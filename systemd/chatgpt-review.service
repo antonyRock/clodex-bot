@@ -1,5 +1,5 @@
 [Unit]
-Description=ChatGPT archive semantic review with durable checkpoints (Haiku + Sonnet check)
+Description=ChatGPT archive semantic review with durable checkpoints (Claude executor + Sonnet check)
 After=network-online.target
 Wants=network-online.target
 
@@ -13,8 +13,8 @@ Environment=TG_CHAT=__TG_ID__
 Environment=HOME=/root
 Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
-# Исполнитель: haiku (по умолчанию) или codex — для отката на прежний вариант
-Environment=REVIEW_EXECUTOR=haiku
+# Исполнитель: opus (решение владельца 2026-11-09), haiku, sonnet или codex — для отката
+Environment=REVIEW_EXECUTOR=opus
 Environment=REVIEW_CHECKER=sonnet
 Environment=REVIEW_CHECK_EVERY=20
 UMask=0077
