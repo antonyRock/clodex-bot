@@ -15,6 +15,8 @@ Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
 # Исполнитель: opus (решение владельца 2026-11-09), haiku, sonnet или codex — для отката
 Environment=REVIEW_EXECUTOR=opus
+# Уровень рассуждений исполнителя: medium (решение владельца 2026-11-09), high — для отката
+Environment=REVIEW_EFFORT=medium
 Environment=REVIEW_CHECKER=sonnet
 # 0 — без проверки (решение владельца 2026-11-09: Opus без проверки Sonnet)
 Environment=REVIEW_CHECK_EVERY=0
