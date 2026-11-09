@@ -75,6 +75,10 @@ def merge(daily, payload):
             vals = {k: v for k, v in p.items() if k not in ("date", "source") and isinstance(v, (int, float))}
             if not vals:
                 continue
+            if name == "sleep_analysis":                 # когда лёг и встал — строки «2026-11-09 05:55:04 +0300»
+                for k in ("sleepStart", "sleepEnd"):
+                    if isinstance(p.get(k), str):
+                        vals[k] = p[k]
             if units == "kJ" and "qty" in vals:          # энергия — всегда в ккал
                 vals["qty"] = vals["qty"] / 4.184
             if units == "%" and vals.get("qty", 100) <= 1:  # доля → проценты
@@ -105,7 +109,7 @@ def fmt(v, digits):
 
 def write_summary(daily):
     days = sorted(daily)[-60:][::-1]
-    head = ["Дата"] + [c[1] for c in COLS] + ["Тренировки"]
+    head = ["Дата"] + [c[1] for c in COLS] + ["Тренировки", "Лёг", "Встал"]
     lines = [
         "# Часы и весы — по дням",
         "",
@@ -124,6 +128,8 @@ def write_summary(daily):
             row.append(fmt((daily[d].get(name) or {}).get(key), digits))
         ws = daily[d].get("_workouts", [])
         row.append("; ".join(f"{w['name']} {w['min']} мин" for w in ws))
+        sl = daily[d].get("sleep_analysis") or {}
+        row += [str(sl.get(k) or "")[11:16] for k in ("sleepStart", "sleepEnd")]   # ЧЧ:ММ по времени часов
         lines.append("| " + " | ".join(row) + " |")
     try:                                   # раздел «Заметки» пишет агент — сохранить его
         old = open(SUMMARY).read()
