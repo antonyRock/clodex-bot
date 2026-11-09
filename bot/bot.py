@@ -22,6 +22,11 @@ CLAUDE = "/root/.local/bin/claude"
 CODEX = "/usr/local/bin/codex"
 CLAUDE_TIMEOUT = 20 * 60
 NAMES = {"claude": "Claude", "codex": "Codex"}
+# Модель Claude для бота: выбор /model хранится в состоянии и действует для всех чатов, пока не сменят (решение владельца 2026-11-10).
+# ключ: (подпись, аргументы claude)
+MODELS = {"default": ("По умолчанию (как настроено на сервере)", []),
+          "opus": ("Opus 5.5", ["--model", "claude-opus-5-5"]),
+          "opus-high": ("Opus 5.5 High", ["--model", "claude-opus-5-5", "--effort", "high"])}
 API = f"https://api.telegram.org/bot{TOKEN}"
 FILE_API = f"https://api.telegram.org/file/bot{TOKEN}"
 
@@ -381,6 +386,7 @@ def run_claude(chat, prompt):
            f"Read(/{MEMORY_DIR}/**)", f"Edit(/{MEMORY_DIR}/**)",
            "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite", "mcp__notion",
            "--disallowedTools", "Bash"]
+    cmd += MODELS.get(load_state().get("claude_model"), MODELS["default"])[1]
     if sid:
         cmd += ["--resume", sid]
     p = subprocess.run(cmd, cwd=WORKDIR, env=env, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT)
@@ -512,6 +518,7 @@ HELP = ("📋 Команды\n"
         "/limits — сколько лимита подписки Claude израсходовано\n"
         "/claude — отвечает Claude\n"
         "/codex — отвечает Codex (свой лимит, подписка ChatGPT)\n"
+        "/model — выбрать модель Claude: Opus 5.5 или Opus 5.5 High; выбор запоминается для всех чатов\n"
         "/status (или слово «статус») — статус системы: службы, разборы, лимиты\n"
         "/reminders (или слово «напоминания») — список напоминаний, отменить кнопкой\n\n"
         "Без команд:\n"
@@ -520,8 +527,16 @@ HELP = ("📋 Команды\n"
         "• «напомни завтра в 9 позвонить в банк» — бот пришлёт напоминание в этот чат;\n"
         "• «да» / «нет» — отправить или отменить черновик письма.")
 COMMANDS = [("help", "список команд"), ("new", "новый чат"), ("limits", "лимиты подписки Claude"),
-            ("claude", "отвечает Claude"), ("codex", "отвечает Codex"), ("status", "статус системы"),
+            ("claude", "отвечает Claude"), ("codex", "отвечает Codex"), ("model", "модель Claude"), ("status", "статус системы"),
             ("reminders", "напоминания")]
+
+
+def model_menu(chat):
+    """Меню /model: текущая модель и кнопки выбора."""
+    cur = load_state().get("claude_model")
+    cur = cur if cur in MODELS else "default"
+    kb = {"inline_keyboard": [[{"text": ("✅ " if k == cur else "") + v[0], "callback_data": f"md:{k}"}] for k, v in MODELS.items()]}
+    send_markup(chat, f"Модель Claude сейчас: {MODELS[cur][0]}.\nВыбор действует для всех чатов, пока не смените. Идущий диалог продолжится на новой модели.", kb)
 
 
 def deliver(chat, text, engine):
@@ -780,6 +795,12 @@ def handle_callback(cb):
     data = str(cb.get("data", ""))
     if data == "new" and chat:
         new_dialog(chat)
+    elif data.startswith("md:") and chat:
+        key = data[3:]
+        if key in MODELS:
+            st = load_state(); st["claude_model"] = key; save_state(st)
+            chatlog("я", f"модель Claude: {MODELS[key][0]}")
+            send(chat, f"Модель Claude: {MODELS[key][0]}. Действует для всех чатов, пока не смените.")
     elif data.startswith("rm:") and chat:
         reminder_button(chat, cb.get("message") or {}, data.split(":")[1:])
     elif data.startswith("pf:") and chat:
@@ -876,6 +897,8 @@ def handle(msg):
         cont = "продолжаю его прежний диалог" if st.get(sid_key(chat, engine)) else "диалог новый"
         return send(chat, f"Теперь отвечает {NAMES[engine]}, {cont}. "
                           "Другой агент этот разговор не видит: важное, что решили, лежит в файлах.")
+    if text.startswith("/model"):
+        return model_menu(chat)
     if text.startswith("/new"):
         return new_dialog(chat)
     if text.startswith("/reminders") or text.strip().lower().strip(".!?") in REMINDER_WORDS:
