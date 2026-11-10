@@ -1027,10 +1027,11 @@ def handle(msg):
 
 def main():
     log("start, allowed:", ALLOWED)
-    try:  # меню команд по кнопке «/» в Telegram
-        api("setMyCommands", {"commands": json.dumps([{"command": c, "description": d} for c, d in COMMANDS], ensure_ascii=False)})
+    try:  # кнопки «Меню» нет: список команд не регистрируем, команды — через /help
+        api("deleteMyCommands", {})
+        api("setChatMenuButton", {"menu_button": json.dumps({"type": "default"})})
     except Exception as e:
-        log("setMyCommands error", e)
+        log("menu reset error", e)
     threading.Thread(target=worker, daemon=True).start()
     threading.Thread(target=flush_groups, daemon=True).start()
     threading.Thread(target=reminder_loop, daemon=True).start()
