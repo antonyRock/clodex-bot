@@ -243,6 +243,13 @@ def build(send_it):
         lines += ["", balance.line(b)] + ([b["verdict"]] if b["skew"] else [])
     except Exception as e:
         print("balance:", repr(e))
+    try:  # слово дня из личного словаря (word_of_day.py, без ИИ); при сухом прогоне состояние не записывается
+        import word_of_day
+        wd_line = word_of_day.line(commit=send_it)
+        if wd_line:
+            lines += ["", wd_line]
+    except Exception as e:
+        print("word_of_day:", repr(e))
     if note:
         lines += ["", note]
     if n:

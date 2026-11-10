@@ -1,0 +1,24 @@
+[Unit]
+Description=Background review of work Telegram chats (Claude executor, stops at 50% of the five-hour limit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKDIR__
+# Запуск по требованию (не включена в автозапуск): systemctl start tg-work-review. Остановка: файл СТОП в папке задачи или systemctl stop tg-work-review.
+# Параметры (модель, effort, права записи, порог лимита) — 00_Параметры.json в папке задачи.
+ExecStart=/usr/bin/python3 /root/night/run_task.py tg-work __WORKDIR__/__ПАПКА_РАЗБОРА_TG__ /root/Claude_кэш/telegram 48
+EnvironmentFile=/root/.config/tg-bot.env
+EnvironmentFile=/root/.config/claude-token
+Environment=TG_CHAT=__TG_ID__
+Environment=HOME=/root
+Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+Nice=10
+Restart=no
+TimeoutStopSec=30
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
