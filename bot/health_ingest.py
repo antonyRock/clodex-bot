@@ -7,13 +7,16 @@
 Что делает с присланным:
   1) кладёт как есть (сжатым) в /root/health/raw/ — чтобы можно было пересобрать всё заново;
   2) раскладывает показатели по дням в /root/health/daily.json;
-  3) пишет таблицу последних 60 дней в досье (файл SUMMARY ниже) — её читает агент.
+  3) пишет таблицу последних 60 дней в досье (файл SUMMARY ниже) — её читает агент;
+  4) через ~10 с после последнего пакета пересобирает личный пульт и присылает в Telegram
+     беззвучную сводку: что изменилось (сон, шаги, пульс покоя, HRV, вес) — не чаще раза в 3 часа
+     и только если значения изменились с прошлой сводки.
 
 В приложении нужно «Группировать по: дню» (Aggregate: Day) — тогда на каждый день одна цифра,
 и повторная отправка того же дня просто её заменяет.
 Пересобрать сводку из сохранённого: health_ingest.py --rebuild
 """
-import gzip, hmac, json, os, sys, threading, time
+import gzip, hmac, json, os, subprocess, sys, threading, time, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 WORKDIR = os.environ.get("AGENT_WORKDIR") or "__WORKDIR__"
@@ -23,6 +26,20 @@ RAW, DAILY = f"{BASE}/raw", f"{BASE}/daily.json"
 TOKEN_FILE = "/root/.config/health-ingest.token"
 PORT, MAX_BODY = 8095, 64 * 1024 * 1024
 lock = threading.Lock()
+PULT = os.path.join(WORKDIR, "__ПАПКА_АГЕНТА__", "20_Личный пульт", "сборка", "make_personal.py")
+NOTIFY_STATE = f"{BASE}/notify.json"
+NOTIFY_GAP = 3 * 3600          # не чаще раза в 3 часа
+SETTLE = 10                    # приложение шлёт пачкой — ждём тишины
+# что показывать в сводке: (показатель, ключ, подпись, знаков, единица)
+NOTE = [
+    ("sleep_analysis", "totalSleep", "😴 Сон", 1, " ч"),
+    ("step_count", "qty", "👣 Шаги", 0, ""),
+    ("resting_heart_rate", "qty", "❤️ Пульс покоя", 0, ""),
+    ("heart_rate_variability", "qty", "〰️ HRV", 0, " мс"),
+    ("weight_body_mass", "qty", "⚖️ Вес", 1, " кг"),
+]
+timer = None
+timer_lock = threading.Lock()
 
 # имя показателя в приложении → (колонка, как брать значение)
 COLS = [
@@ -143,6 +160,66 @@ def write_summary(daily):
     os.replace(tmp, SUMMARY)
 
 
+def latest(daily):
+    """Последнее значение каждого показателя сводки: подпись → [день, значение]."""
+    out = {}
+    for name, key, label, digits, unit in NOTE:
+        for d in sorted(daily, reverse=True):
+            v = (daily[d].get(name) or {}).get(key)
+            if isinstance(v, (int, float)):
+                out[label] = [d, round(v, digits)]
+                break
+    return out
+
+
+def tg_send(text):
+    token, chat = os.environ.get("TG_TOKEN"), os.environ.get("TG_CHAT")
+    if not token or not chat:
+        print("уведомление: нет TG_TOKEN/TG_CHAT", flush=True)
+        return False
+    data = urllib.parse.urlencode({"chat_id": chat, "text": text, "disable_notification": "true"}).encode()
+    urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data, timeout=30)
+    return True
+
+
+def after_ingest(received):
+    """Пересобрать личный пульт и, если пора и есть что сказать, прислать сводку."""
+    try:
+        if os.path.isfile(PULT):
+            p = subprocess.run(["/usr/bin/python3", PULT], capture_output=True, text=True, timeout=300,
+                               cwd=os.path.dirname(PULT))
+            if p.returncode != 0:
+                print("пульт:", (p.stderr or p.stdout).strip()[-300:], flush=True)
+        with lock:
+            now_vals = latest(load_daily())
+        try:
+            st = json.load(open(NOTIFY_STATE))
+        except (FileNotFoundError, json.JSONDecodeError):
+            st = {}
+        changed = [k for k, v in now_vals.items() if st.get("vals", {}).get(k) != v]
+        if not changed or time.time() - st.get("sent", 0) < NOTIFY_GAP:
+            return
+        lines = [f"🩺 Новое из «Здоровья» · пришло {time.strftime('%d.%m %H:%M', time.localtime(received))}"]
+        for name, key, label, digits, unit in NOTE:
+            if label in changed:
+                d, v = now_vals[label]
+                lines.append(f"{label}: {fmt(v, digits)}{unit} ({d[8:10]}.{d[5:7]})")
+        if tg_send("\n".join(lines)):
+            save_json(NOTIFY_STATE, {"sent": time.time(), "vals": now_vals})
+    except Exception as e:                      # приём данных не должен падать из-за уведомления
+        print("после приёма:", e, flush=True)
+
+
+def schedule_after(received):
+    global timer
+    with timer_lock:
+        if timer:
+            timer.cancel()
+        timer = threading.Timer(SETTLE, after_ingest, args=(received,))
+        timer.daemon = True
+        timer.start()
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -183,6 +260,8 @@ class H(BaseHTTPRequestHandler):
             write_summary(daily)
         print(f"{name}: {n} значений", flush=True)
         self.reply(200, {"ok": True, "values": n})
+        if n:
+            schedule_after(time.time())
 
 
 def rebuild():

@@ -2,6 +2,8 @@
 Description=Apple Health data receiver (Health Auto Export)
 After=network.target
 [Service]
+EnvironmentFile=/root/.config/tg-bot.env
+Environment=TG_CHAT=__TG_ID__
 ExecStart=/usr/bin/python3 /root/tg-bot/health_ingest.py
 Restart=always
 [Install]
