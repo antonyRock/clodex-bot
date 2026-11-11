@@ -9,7 +9,7 @@ render.py <settings.json> <папка-результат>
 import json, os, re, shutil, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PARTS = ["bot", "auth", "night", "bin", "nginx", "systemd"]
+PARTS = ["bot", "auth", "night", "bin", "nginx", "systemd", "clodex-mcp"]
 MARK = re.compile(r"__[A-ZА-ЯЁ0-9_]+__")
 
 

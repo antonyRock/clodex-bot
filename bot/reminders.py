@@ -13,7 +13,7 @@
   END_REMIND_CANCEL
 
 Хранилище — reminders.json рядом с ботом. Время — московское."""
-import json, os, re, threading, uuid
+import contextlib, fcntl, json, os, re, threading, uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -26,6 +26,17 @@ REPEAT_RU = {"daily": "каждый день", "weekdays": "по будням", 
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
           "сентября", "октября", "ноября", "декабря"]
 _lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _flock():
+    """Файл напоминаний пишут два процесса (бот и MCP-сервер): блокировка между процессами, не только потоками."""
+    with open(FILE + ".lock", "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def now():
@@ -124,7 +135,7 @@ def add(chat, block):
         at = next_time(at, repeat, dom)
     r = {"id": uuid.uuid4().hex[:8], "chat": chat, "text": text, "at": at.isoformat(), "repeat": repeat,
          "snooze": None, "nag": 0, "msg": None, "dom": dom, "created": now().isoformat()}
-    with _lock:
+    with _lock, _flock():
         items = load(); items.append(r); save(items)
     return f"⏰ Напомню {describe(r)}", r["id"]
 
@@ -135,7 +146,7 @@ def cancel(chat, block):
     q = (m.group(1) if m else "").strip().lower()
     if not q:
         return "⚠️ Не понял, какое напоминание отменить."
-    with _lock:
+    with _lock, _flock():
         items = load()
         gone = [r for r in items if r["chat"] == chat and (q == "*" or q in r["text"].lower())]
         save([r for r in items if r not in gone])
@@ -145,7 +156,7 @@ def cancel(chat, block):
 
 
 def cancel_id(rid):
-    with _lock:
+    with _lock, _flock():
         items = load()
         gone = [r for r in items if r["id"] == rid]
         save([r for r in items if r["id"] != rid])
@@ -180,7 +191,7 @@ def due():
     чтобы при сбое отправки не было потока одинаковых сообщений. После последнего повтора
     разовое ждёт нажатия 2 суток (кнопки работают), повторяющееся встаёт на следующий раз."""
     out, t = [], now()
-    with _lock:
+    with _lock, _flock():
         items = load()
         for r in items:
             if r["nag"] > NAG_MAX:   # разовое, прозвонило все разы — ждёт кнопки
@@ -211,7 +222,7 @@ def finish(r):
 
 def set_msg(rid, at_iso, msg_id):
     """Запомнить последнее сообщение, если запись всё ещё на том же срабатывании."""
-    with _lock:
+    with _lock, _flock():
         items = load()
         for r in items:
             if r["id"] == rid and r["at"] == at_iso:
@@ -226,7 +237,7 @@ def _current(items, rid, o):
 
 def done(rid, o):
     """«Готово». Возвращает текст для пользователя."""
-    with _lock:
+    with _lock, _flock():
         items = load()
         r, _ = _current(items, rid, o)
         if not r:
@@ -237,7 +248,7 @@ def done(rid, o):
 
 
 def snooze(rid, o, minutes):
-    with _lock:
+    with _lock, _flock():
         items = load()
         r, other = _current(items, rid, o)
         if not r:
