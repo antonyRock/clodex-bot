@@ -21,6 +21,7 @@ TARGETS = {                                      # папка репозитор
     "auth": "/root/brain-auth",
     "night": "/root/night",
     "bin": "/usr/local/bin",
+    "clodex-mcp": "/root/clodex-mcp",
     "nginx": "/etc/nginx/sites-available",
     "systemd": "/etc/systemd/system",
 }
@@ -34,6 +35,22 @@ def h(path):
 def run(*cmd):
     print("$", " ".join(cmd))
     subprocess.run(cmd, check=True)
+
+
+def setup_mcp(reinstall):
+    """MCP Clodex: окружение Python и запуск службы. Служба стартует только когда есть файл ключей —
+    его создаёт человек (GitHub OAuth App и секреты), код этого не делает."""
+    venv = "/root/clodex-mcp/venv"
+    if not os.path.exists(venv + "/bin/python"):
+        run(sys.executable, "-m", "venv", venv)
+        reinstall = True
+    if reinstall:
+        run(venv + "/bin/pip", "install", "--quiet", "-r", "/root/clodex-mcp/requirements.txt")
+    if os.path.exists("/root/.config/clodex-mcp.env"):
+        run("systemctl", "enable", "clodex-mcp")
+        run("systemctl", "restart", "clodex-mcp")
+    else:
+        print("MCP: нет /root/.config/clodex-mcp.env — служба clodex-mcp не запущена (ждёт ключей).")
 
 
 def main():
@@ -94,6 +111,8 @@ def main():
         run("systemctl", "reload", "nginx")
     if "auth" in parts:
         run("systemctl", "restart", "brain-auth")
+    if "clodex-mcp" in parts or any(rel.endswith("clodex-mcp.service") for rel, _ in changes):
+        setup_mcp(any(rel.startswith("clodex-mcp/requirements") for rel, _ in changes))
     if any(rel.endswith(("health_ingest.py", "health-ingest.service")) for rel, _ in changes):
         run("systemctl", "enable", "health-ingest")
         run("systemctl", "restart", "health-ingest")

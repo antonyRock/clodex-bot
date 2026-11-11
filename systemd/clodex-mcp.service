@@ -1,0 +1,19 @@
+[Unit]
+Description=MCP Clodex (apps Claude/ChatGPT -> Claude_AI base)
+After=network-online.target
+Wants=network-online.target
+[Service]
+WorkingDirectory=/root/clodex-mcp
+EnvironmentFile=/root/.config/clodex-mcp.env
+EnvironmentFile=/root/.config/tg-bot.env
+EnvironmentFile=/root/.config/mail.env
+Environment=HOME=/root
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=CLODEX_BASE_URL=https://__DOMAIN__
+ExecStart=/root/clodex-mcp/venv/bin/python /root/clodex-mcp/clodex_server.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target
