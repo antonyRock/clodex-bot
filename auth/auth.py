@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Сервис входа на сайт: /login, /auth/login, /auth/check, /auth/logout. Слушает 127.0.0.1:8090."""
-import hashlib, hmac, html, json, os, secrets, threading, time
+"""Сервис входа на сайт: /login, /auth/login, /auth/check, /auth/logout. Слушает 127.0.0.1:8090.
+Второй фактор (TOTP, код из приложения-аутентификатора) включается файлом totp.json — его создаёт vklyuchit_kod.py.
+Нет файла — вход только по паролю."""
+import base64, hashlib, hmac, html, json, os, secrets, struct, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
@@ -8,11 +10,13 @@ from urllib.parse import parse_qs, urlparse
 BASE = "/root/brain-auth"
 AUTH_FILE = f"{BASE}/auth.json"
 SESS_FILE = f"{BASE}/sessions.json"
+TOTP_FILE = f"{BASE}/totp.json"
 COOKIE = "brain_session"
 TTL = 7 * 24 * 3600
 MAX_FAILS, WINDOW = 8, 15 * 60
 lock = threading.Lock()
 fails = {}
+used_steps = set()  # уже использованные коды (защита от повтора)
 
 
 def load(path, default):
@@ -37,6 +41,45 @@ def check_password(login, password):
         return False
     h = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(a["salt"]), a["iter"])
     return hmac.compare_digest(h.hex(), a["hash"])
+
+
+def totp_at(secret, step):
+    key = base64.b32decode(secret.upper() + "=" * (-len(secret) % 8))
+    d = hmac.new(key, struct.pack(">Q", step), hashlib.sha1).digest()
+    o = d[-1] & 15
+    return "%06d" % ((struct.unpack(">I", d[o:o + 4])[0] & 0x7FFFFFFF) % 1000000)
+
+
+def check_code(code):
+    """True, если второй фактор выключен или код верный (TOTP ±30 с либо запасной код, одноразовый)."""
+    t = load(TOTP_FILE, {})
+    if not t.get("secret"):
+        return True
+    code = code.strip().replace(" ", "").lower()
+    if code.isdigit() and len(code) == 6:
+        now = int(time.time() // 30)
+        for step in (now - 1, now, now + 1):
+            if hmac.compare_digest(totp_at(t["secret"], step), code):
+                with lock:
+                    if step in used_steps:
+                        return False
+                    used_steps.add(step)
+                    for s in [x for x in used_steps if x < now - 2]:
+                        used_steps.discard(s)
+                return True
+        return False
+    h = hashlib.sha256(code.replace("-", "").encode()).hexdigest()
+    with lock:
+        t = load(TOTP_FILE, {})
+        if h in t.get("recovery", []):
+            t["recovery"].remove(h)
+            save(TOTP_FILE, t)
+            return True
+    return False
+
+
+def totp_on():
+    return bool(load(TOTP_FILE, {}).get("secret"))
 
 
 def session_valid(token):
@@ -71,7 +114,7 @@ button{margin-top:22px;width:100%;font-size:16px;padding:13px;border:0;border-ra
 <input type="hidden" name="next" value="{next}">
 <label for="l">Логин</label><input id="l" name="login" autocomplete="username" autocapitalize="none" required>
 <label for="p">Пароль</label><input id="p" name="password" type="password" autocomplete="current-password" required>
-<button type="submit">Войти</button>{err}
+{code}<button type="submit">Войти</button>{err}
 </form></body></html>"""
 
 
@@ -100,7 +143,9 @@ class H(BaseHTTPRequestHandler):
 
     def login_page(self, nxt, err=""):
         e = f'<div class="err">{html.escape(err)}</div>' if err else ""
-        return PAGE.replace("{next}", html.escape(safe_next(nxt))).replace("{err}", e).encode()
+        c = ('<label for="c">Код из приложения</label><input id="c" name="code" inputmode="numeric" '
+             'autocomplete="one-time-code" autocapitalize="none" required>') if totp_on() else ""
+        return PAGE.replace("{next}", html.escape(safe_next(nxt))).replace("{code}", c).replace("{err}", e).encode()
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -133,10 +178,14 @@ class H(BaseHTTPRequestHandler):
             fails[ip] = [t for t in fails.get(ip, []) if now - t < WINDOW]
             if len(fails[ip]) >= MAX_FAILS:
                 return self.send(429, self.login_page(nxt, "Слишком много попыток. Подождите 15 минут."))
-        if not check_password(form.get("login", [""])[0], form.get("password", [""])[0]):
+        ok = check_password(form.get("login", [""])[0], form.get("password", [""])[0])
+        if ok and not check_code(form.get("code", [""])[0]):
+            ok = False
+        if not ok:
             with lock:
                 fails[ip].append(now)
-            return self.send(401, self.login_page(nxt, "Неверный логин или пароль."))
+            msg = "Неверный логин, пароль или код." if totp_on() else "Неверный логин или пароль."
+            return self.send(401, self.login_page(nxt, msg))
         t = secrets.token_urlsafe(32)
         with lock:
             fails.pop(ip, None)
