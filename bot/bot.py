@@ -989,6 +989,10 @@ def handle(msg):
         try:
             path = download(voice["file_id"], VOICE_DIR, f"{datetime.now():%Y%m%d_%H%M%S}.ogg")
             said = transcribe(path)
+            try:
+                os.remove(path)   # аудио не нужно: текст остаётся в журнале чата; неудачные файлы убирает ежемесячная чистка
+            except OSError:
+                pass
         except Exception as e:
             log("voice error", repr(e))
             return send(chat, f"Не смог распознать голосовое: {e}")

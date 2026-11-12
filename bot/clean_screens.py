@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Ежемесячная чистка скриншотов переписки (шаг 18 архитектуры).
+"""Ежемесячная чистка скриншотов переписки (шаг 18 архитектуры) и отчёт о месте на диске сервера.
 Удаляет tg_*.jpg|jpeg|png|webp из 06_Загрузки/ и 06_Загрузки/02_Переписанные скриншоты/, если имя файла есть в журнале переписки
 в строке с «переписан» и файлу больше 30 дней. Заодно удаляет их версии Syncthing
 в .stversions/06_Загрузки/ (и в подпапке). Сводка — в Telegram.
 Запуск: clean_screens.py            — боевой запуск + сводка в Telegram;
         clean_screens.py --dry-run  — только показать, ничего не удалять и не отправлять."""
-import glob, os, re, sys, time, urllib.parse, urllib.request
+import glob, json, os, re, shutil, subprocess, sys, time, urllib.parse, urllib.request
 
 WORKDIR = "__WORKDIR__"
 UPLOADS = os.path.join(WORKDIR, "06_Загрузки")
@@ -15,6 +15,11 @@ VERSIONS = os.path.join(WORKDIR, ".stversions", "06_Загрузки")
 VERSION_DIRS = [VERSIONS, os.path.join(VERSIONS, SCREENS)]
 JOURNALS = ["03_Проекты/**/01_Переписка*/*.md", "02_Глубокий контекст/**/*Переписка Китай*/*.md"]
 MAX_AGE_DAYS = 30
+VOICE_DIR = "/root/tg-bot/voice"      # голосовые: бот удаляет после расшифровки; здесь — остатки неудачных, старше VOICE_MAX_DAYS
+VOICE_MAX_DAYS = 7
+DISK_STATE = "/root/tg-bot/disk_report.json"   # размеры папок прошлого запуска — для строки «рост за месяц»
+DISK_DIRS = ["/root/tg-bot", "/root/.claude", "/root/Claude_кэш", "/root/.local", "/root/.cache", "/root/.codex",
+             "/root/.npm", "/var/log", "/root/agent-backup", os.path.join(WORKDIR, ".stversions")]
 NAME_RE = re.compile(r"^tg_.+\.(jpe?g|png|webp)$", re.I)
 
 
@@ -47,6 +52,49 @@ def send(text):
     chat = os.environ.get("TG_ALLOWED", "").split(",")[0]
     data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
     urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data, timeout=30)
+
+
+def clean_voice(dry):
+    """Удаляет остатки голосовых старше VOICE_MAX_DAYS; возвращает (штук, байт)."""
+    n = size = 0
+    for path in glob.glob(os.path.join(VOICE_DIR, "*")):
+        if os.path.isfile(path) and time.time() - os.path.getmtime(path) > VOICE_MAX_DAYS * 86400:
+            size += os.path.getsize(path); n += 1
+            if not dry:
+                try:
+                    os.remove(path)
+                except OSError:
+                    n -= 1
+    return n, size
+
+
+def folder_mb(path):
+    try:
+        out = subprocess.run(["du", "-sk", path], capture_output=True, text=True, timeout=300).stdout.split()
+        return int(out[0]) / 1024
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def disk_report(dry):
+    """Строки отчёта: место на диске, папки по размеру и рост с прошлого запуска."""
+    total, _, free = shutil.disk_usage("/")
+    sizes = {d: folder_mb(d) for d in DISK_DIRS if os.path.exists(d)}
+    try:
+        prev = json.load(open(DISK_STATE, encoding="utf-8"))
+    except (OSError, ValueError):
+        prev = {}
+    lines = [f"💾 Диск: свободно {free / 2**30:.0f} ГБ из {total / 2**30:.0f} ГБ", "Папки (рост с прошлого запуска):"]
+    for d, mb in sorted(((d, m) for d, m in sizes.items() if m is not None), key=lambda x: -x[1]):
+        name = d.replace("/root/", "~/").replace(WORKDIR, "Claude_AI")
+        grow = f", {mb - prev[d]:+.0f} МБ" if d in prev else ""
+        lines.append(f"• {name}: {mb / 1024:.1f} ГБ{grow}" if mb >= 1024 else f"• {name}: {mb:.0f} МБ{grow}")
+    if not dry:
+        try:
+            json.dump({d: m for d, m in sizes.items() if m is not None}, open(DISK_STATE, "w", encoding="utf-8"))
+        except OSError:
+            pass
+    return lines
 
 
 def main():
@@ -87,6 +135,10 @@ def main():
     ]
     if errors:
         lines.append("⚠️ Ошибки: " + "; ".join(errors[:5]))
+    vn, vsize = clean_voice(dry)
+    if vn:
+        lines.append(f"🎙 Остатки голосовых старше {VOICE_MAX_DAYS} дн.: {'к удалению' if dry else 'удалено'} {vn} ({vsize / 2**20:.1f} МБ)")
+    lines += [""] + disk_report(dry)
     if dry:
         lines += ["", "К удалению:"] + (removed or ["—"])
         lines += ["Ждут:"] + (young or ["—"])
