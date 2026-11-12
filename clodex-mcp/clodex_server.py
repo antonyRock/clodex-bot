@@ -55,7 +55,9 @@ def owner_check():
 def client_name():
     try:
         from fastmcp.server.dependencies import get_context
-        return str(get_context().session.client_params.clientInfo.name or "app")[:40]
+        cp = get_context().session.client_params
+        info = getattr(cp, "client_info", None) or getattr(cp, "clientInfo", None)
+        return str(info.name or "app")[:40]
     except Exception:  # noqa: BLE001
         return "app"
 

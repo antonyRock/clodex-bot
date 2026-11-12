@@ -35,10 +35,9 @@ class Base(unittest.TestCase):
         put("01_Главный контекст/05_Задачи/01_Личные.md",
             f"# Личные\n- [ ] Л-001 · {TODAY - timedelta(days=2)} · — · Просроченное дело · __ИМЯ__\n  - дальше: позвонить\n"
             f"- [ ] Л-002 · без срока · — · Без срока · агент\n- [x] Л-003 · {TODAY} · — · Закрыто · __ИМЯ__\n"
-            f"- [ ] Л-004 · {TODAY + timedelta(days=30)} · mcp · Далёкое · __ИМЯ__ и агент\n  - вопрос: есть ли Plus\n")
-        put("01_Главный контекст/05_Задачи/06_События.md",
-            f"# События\n- [ ] Е-001 · {TODAY + timedelta(days=3)} · t6d · Встреча · встреча\n  - время: 11:00\n"
-            f"- [ ] Е-002 · {TODAY + timedelta(days=90)} · t6d · Далёкая · веха\n")
+            f"- [ ] Л-004 · {TODAY + timedelta(days=30)} · mcp · Далёкое · __ИМЯ__ и агент\n  - вопрос: есть ли Plus\n"
+            f"- [ ] Л-005 · {TODAY + timedelta(days=3)} · t6d · Встреча · __ИМЯ__\n  - вид: встреча\n  - время: 11:00\n"
+            f"- [ ] Л-006 · {TODAY + timedelta(days=90)} · t6d · Далёкая · __ИМЯ__\n  - вид: веха\n")
         put("03_Проекты/04_Агент/24_MCP Clodex/02_Для приложения.md", "Ты в приложении.")
         put("03_Проекты/04_Агент/CLAUDE.md", "правила проекта")
         put("03_Проекты/04_Агент/файл.md", "строка один\nстрока ТЕЛЕФОН два\n")
@@ -119,6 +118,7 @@ class TestTools(Base):
         self.assertNotIn("Закрыто", r)
         self.assertIn("(просрочено: 1)", r)
         self.assertIn("дальше: позвонить", r)
+        self.assertIn("### ЛИЧНЫЕ — ", r)
         self.assertIn("Далёкое", T.tasks(project="mcp"))
         self.assertNotIn("Далёкое", T.tasks(due_before=str(TODAY)))
         w = T.tasks(waiting_for_anton=True)

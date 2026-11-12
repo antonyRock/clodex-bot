@@ -30,7 +30,6 @@ LOG_DIR = os.path.join(A.CACHE, "mcp-log")
 
 TASK_DIR = "01_Главный контекст/05_Задачи"
 TASK_FILES = {"личные": "01_Личные.md", "рабочие": "02_Рабочие.md", "система": "03_Система.md"}
-EVENTS_FILE = "06_События.md"
 WATCH = (TASK_DIR + "/", "03_Проекты/00_Реестр проектов.md", "02_Глубокий контекст/07_Деньги_и_бизнес/02_Финансы")
 MOVE_PROTECTED = {"CLAUDE.md", "AGENTS.md", ".машина.md", ".stignore", "Доступы.md"}
 TEXT_EXT = {".md", ".txt", ".json", ".csv", ".tsv", ".html", ".htm", ".yaml", ".yml", ".log", ".xml", ".ini",
@@ -230,7 +229,8 @@ def search(pattern, path="", scope="all", page=0, per_page=50, ignore_case=True,
 
 # ---------- дела и события ----------
 
-def parse_tasks(sphere=""):
+def parse_tasks(sphere="", records=False):
+    """records=False: записи «вид: веха|встреча» — это события (единая запись), в списки дел не попадают."""
     res = []
     for sp, fn in TASK_FILES.items():
         if sphere and sphere != sp:
@@ -256,7 +256,7 @@ def parse_tasks(sphere=""):
                 cur["extra"][k.strip()] = v.strip()
             elif not line.strip():
                 pass
-    return res
+    return res if records else [t for t in res if t["extra"].get("вид") not in ("веха", "встреча")]
 
 
 def fmt_task(t):
@@ -265,6 +265,20 @@ def fmt_task(t):
         if t["extra"].get(k):
             s += f"\n  - {k}: {t['extra'][k][:300]}"
     return s
+
+
+SPHERE_TITLE = {"личные": "ЛИЧНЫЕ", "рабочие": "РАБОЧИЕ",
+                "система": "СИСТЕМА — часть личных дел __ИМЯ_Р__ (сервер, бот, агент, автоматизации, MCP, пульты)"}
+
+
+def grouped(items):
+    """Дела по сферам с заголовками: приложение не должно смешивать личные, рабочие и системные."""
+    out = []
+    for sp in TASK_FILES:
+        sel = [t for t in items if t["sphere"] == sp]
+        if sel:
+            out.append(f"### {SPHERE_TITLE[sp]} — {len(sel)}\n" + "\n".join(fmt_task(t) for t in sel))
+    return "\n\n".join(out)
 
 
 def tasks(sphere="", project="", due_before="", waiting_for_anton=False, include_done=False, limit=40):
@@ -293,28 +307,22 @@ def tasks(sphere="", project="", due_before="", waiting_for_anton=False, include
     over = sum(1 for t in out if t["date"] and t["date"] < today)
     head = (f"Сегодня {today:%Y-%m-%d}. Дел по фильтру: {len(out)} (просрочено: {over}). "
             "Номера дел служебные — __ИМЯ_Д__ называйте дело текстом, не номером.")
-    body = "\n".join(fmt_task(t) for t in out[:limit])
+    body = grouped(out[:limit])
     return head + "\n" + (body or "(нет)") + (f"\n… ещё {len(out) - limit}" if len(out) > limit else "")
 
 
 def events(days=14):
-    path = os.path.join(A.WORKDIR, TASK_DIR, EVENTS_FILE)
-    if not os.path.isfile(path):
-        return []
+    """Ближайшие события: открытые записи «вид: веха|встреча» из файлов дел (единая запись, 2026-11-12)."""
     today = now().date()
-    res, cur = [], None
-    for line in open(path, encoding="utf-8"):
-        m = re.match(r"^- \[( )\] (\S+) · (\d{4}-\d{2}-\d{2}) · (.*)$", line.rstrip("\n"))
-        if m:
-            d = date.fromisoformat(m.group(3))
-            if today <= d <= today + timedelta(days=days):
-                f = m.group(4).split(" · ")
-                cur = {"date": d, "project": f[0], "title": " · ".join(f[1:-1]) or f[0], "kind": f[-1], "time": ""}
-                res.append(cur)
-            else:
-                cur = None
-        elif cur and line.startswith("  - время:"):
-            cur["time"] = line.split(":", 1)[1].strip()
+    res = []
+    for t in parse_tasks(records=True):
+        k = t["extra"].get("вид")
+        if k not in ("веха", "встреча") or t["status"] != " " or not t["date"]:
+            continue
+        if today <= t["date"] <= today + timedelta(days=days):
+            kind = "цель" if t["extra"].get("цель") == "да" else "план" if t["extra"].get("план") == "да" else k
+            res.append({"date": t["date"], "project": t["project"], "title": t["title"], "kind": kind,
+                        "time": t["extra"].get("время", "")})
     return sorted(res, key=lambda e: (e["date"], e["time"]))
 
 
@@ -330,7 +338,7 @@ def start():
                  (open(root, encoding="utf-8").read() if os.path.isfile(root) else "(CLAUDE.md не найден)"))
     due = [x for x in parse_tasks() if x["status"] not in "x-" and x["date"] and x["date"] <= today]
     due.sort(key=lambda x: (x["date"], x["id"]))
-    parts.append("== ДЕЛА: просрочено и на сегодня ==\n" + ("\n".join(fmt_task(x) for x in due[:25]) or "(нет)"))
+    parts.append("== ДЕЛА: просрочено и на сегодня (по сферам; отвечая, не смешивай личные, рабочие и системные) ==\n" + (grouped(due[:25]) or "(нет)"))
     ev = events(14)
     parts.append("== СОБЫТИЯ на 14 дней ==\n" + ("\n".join(
         f"- {e['date']:%Y-%m-%d} {e['time']} · {e['project']} · {e['title']} · {e['kind']}" for e in ev) or "(нет)"))
