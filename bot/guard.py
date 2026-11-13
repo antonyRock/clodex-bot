@@ -152,18 +152,28 @@ def send(text):
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "daily"
     ok, bad = check()
+    # патруль безопасности (patrol.py): в daily — только новое, в weekly — всё открытое + сводка
+    try:
+        import patrol
+        pok, pbad, pnotes, pcommit = patrol.check(mode if mode in ("weekly", "print") else "daily")
+    except Exception as e:
+        pok, pbad, pnotes, pcommit = [], [f"Патруль безопасности: не удалось проверить ({e!r})"[:200]], [], None
+    bad += pbad
+    ok += pok
     if mode == "weekly":
         head = "🛡 Сторож: недельная сводка" + (" — есть проблемы" if bad else " — всё в порядке")
         tl = tasks_lines(True)
-        send("\n".join([head, ""] + [f"⚠️ {x}" for x in bad] + [f"✅ {x}" for x in ok] + ([""] + tl if tl else [])))
+        send("\n".join([head, ""] + [f"⚠️ {x}" for x in bad] + [f"✅ {x}" for x in ok] + pnotes + ([""] + tl if tl else [])))
     elif mode == "print":
-        print("\n".join([f"⚠️ {x}" for x in bad] + [f"✅ {x}" for x in ok] + [""] + tasks_lines(True)))
+        print("\n".join([f"⚠️ {x}" for x in bad] + [f"✅ {x}" for x in ok] + pnotes + [""] + tasks_lines(True)))
     else:
         tl = tasks_lines(False)
         parts = []
-        if bad:
-            parts += ["🛡 Сторож: нужно внимание", ""] + [f"⚠️ {x}" for x in bad]
+        if bad or pnotes:
+            parts += ["🛡 Сторож: нужно внимание", ""] + [f"⚠️ {x}" for x in bad] + pnotes
         if tl:
             parts += ([""] if parts else []) + tl
         if parts:
             send("\n".join(parts))
+    if pcommit and mode in ("daily", "weekly"):
+        pcommit()

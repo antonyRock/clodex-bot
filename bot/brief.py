@@ -11,6 +11,8 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, "/root/tg-bot")
 import guard  # noqa: E402
 
+PATROL = {}   # commit патруля безопасности: вызывается после отправки сводки
+
 TOKEN = os.environ["TG_TOKEN"]
 CHAT = os.environ.get("TG_ALLOWED", "").split(",")[0]
 WORKDIR = "__WORKDIR__"
@@ -220,6 +222,13 @@ def build(send_it):
 
     ok, bad = guard.check()
     bad += mail_err
+    try:  # патруль безопасности (patrol.py, без ИИ): в будни — только новое, в понедельник — полная сводка
+        import patrol
+        pok, pbad, pnotes, pcommit = patrol.check("weekly" if wd == 0 else "daily")
+        PATROL["commit"] = pcommit if send_it else None   # запомнить «сообщили» только после отправки
+    except Exception as e:
+        pok, pbad, pnotes = [], [f"Патруль безопасности: не удалось проверить ({e!r})"[:200]], []
+    bad += pbad
     try:
         errs, _w, _n, _p = registry().check()
         if errs:
@@ -232,6 +241,9 @@ def build(send_it):
         bal = next((x for x in ok if x.startswith("Сервер")), "")
         m = re.search(r"~(\d+) дн", bal)
         lines.append("🛡 Системы: всё в порядке" + (f", сервер оплачен ещё на ~{m.group(1)} дн." if m else ""))
+    if wd == 0 and not pbad:
+        lines += pok
+    lines += pnotes
     if wd < 5:
         tasks = guard.pending_tasks() or []
         if tasks:
@@ -271,6 +283,11 @@ if __name__ == "__main__":
     try:
         text, items = build(True)
         r = send(text)
+        try:
+            if PATROL.get("commit"):
+                PATROL["commit"]()
+        except Exception as e:
+            print("patrol commit:", repr(e))
         json.dump({"date": date.today().isoformat(), "message_id": r["result"]["message_id"], "items": items},
                   open(LAST, "w"), ensure_ascii=False)
         print("отправлено, пунктов:", len(items))

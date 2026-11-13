@@ -144,6 +144,13 @@ def conflicts():
 
 def build():
     ok, bad = guard.check()
+    try:  # патруль безопасности: всё открытое сейчас, ничего не запоминает
+        import patrol
+        pok, pbad, _n, _c = patrol.check("print")
+        ok += pok
+        bad += pbad
+    except Exception as e:
+        bad.append(f"Патруль безопасности: не удалось проверить ({e!r})"[:200])
     # конфликты покажем отдельно, с кнопкой
     bad = [b for b in bad if not b.startswith("Конфликты синхронизации")]
     ok = [o for o in ok if not o.startswith("Конфликтов синхронизации")]
