@@ -56,7 +56,12 @@ def setup_mcp(reinstall):
 def main():
     args = set(sys.argv[1:])
     if "--no-pull" not in args and "--check" not in args:
+        me = os.path.abspath(__file__)
+        before = h(me)
         run("git", "-C", REPO, "pull", "--ff-only")
+        if h(me) != before:   # pull обновил сам deploy.py — дальше выкладывает новая версия, иначе её новые шаги пропустятся
+            print("deploy.py обновился — продолжаю новой версией")
+            os.execv(sys.executable, [sys.executable, me, "--no-pull"] + sys.argv[1:])
     commit = subprocess.run(["git", "-C", REPO, "rev-parse", "--short", "HEAD"],
                             capture_output=True, text=True).stdout.strip()
     out = tempfile.mkdtemp(prefix="agent-render-")
