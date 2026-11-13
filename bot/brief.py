@@ -88,7 +88,7 @@ def mail():
         important, errors = mail_watch.collect()
     except Exception as e:
         return [], [f"Почта: не удалось проверить ({e!r})"[:300]]
-    icons = {"pay": "💳", "gov": "🏛", "bank": "🏦"}
+    icons = {"pay": "💳", "gov": "🏛", "bank": "🏦", "case": "📨"}
     return [f"{icons.get(v['kind'], '✉️')} {it['from'][:60]} — {v.get('summary', '')}" for it, v in important], errors
 
 
