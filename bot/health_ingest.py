@@ -56,6 +56,19 @@ COLS = [
     ("weight_body_mass", "Вес, кг", "qty", 1),
     ("body_fat_percentage", "Жир, %", "qty", 1),
 ]
+# дополнительные колонки — в самом конце таблицы, после «Лёг» и «Встал» (порядок прежних колонок не меняется: их читает личный пульт)
+EXTRA = [
+    ("walking_running_distance", "Дистанция, км", "qty", 1),
+    ("flights_climbed", "Этажи", "qty", 0),
+    ("apple_stand_hour", "Стоя, ч", "qty", 0),
+    ("blood_oxygen_saturation", "SpO2, %", "qty", 0),
+    ("respiratory_rate", "Дыхание, в мин", "qty", 1),
+    ("apple_sleeping_wrist_temperature", "Темп. запястья во сне, °C", "qty", 1),
+    ("time_in_daylight", "Свет на улице, мин", "qty", 0),
+    ("walking_speed", "Скорость ходьбы, км/ч", "qty", 1),
+    ("basal_energy_burned", "Базовые ккал", "qty", 0),
+    ("sleep_analysis", "Бодрствовал во сне, ч", "awake", 2),
+]
 
 
 def token():
@@ -126,7 +139,7 @@ def fmt(v, digits):
 
 def write_summary(daily):
     days = sorted(daily)[-60:][::-1]
-    head = ["Дата"] + [c[1] for c in COLS] + ["Тренировки", "Лёг", "Встал"]
+    head = ["Дата"] + [c[1] for c in COLS] + ["Тренировки", "Лёг", "Встал"] + [c[1] for c in EXTRA]
     lines = [
         "# Часы и весы — по дням",
         "",
@@ -147,6 +160,7 @@ def write_summary(daily):
         row.append("; ".join(f"{w['name']} {w['min']} мин" for w in ws))
         sl = daily[d].get("sleep_analysis") or {}
         row += [str(sl.get(k) or "")[11:16] for k in ("sleepStart", "sleepEnd")]   # ЧЧ:ММ по времени часов
+        row += [fmt((daily[d].get(name) or {}).get(key), digits) for name, _, key, digits in EXTRA]
         lines.append("| " + " | ".join(row) + " |")
     try:                                   # раздел «Заметки» пишет агент — сохранить его
         old = open(SUMMARY).read()
