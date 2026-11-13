@@ -60,7 +60,7 @@ def main():
         before = h(me)
         run("git", "-C", REPO, "pull", "--ff-only")
         if h(me) != before:   # pull обновил сам deploy.py — дальше выкладывает новая версия, иначе её новые шаги пропустятся
-            print("deploy.py обновился — продолжаю новой версией")
+            print("deploy.py обновился — продолжаю новой версией", flush=True)   # без flush вывод до execv теряется
             os.execv(sys.executable, [sys.executable, me, "--no-pull"] + sys.argv[1:])
     commit = subprocess.run(["git", "-C", REPO, "rev-parse", "--short", "HEAD"],
                             capture_output=True, text=True).stdout.strip()
