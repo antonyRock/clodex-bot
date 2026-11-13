@@ -9,7 +9,7 @@ TOKEN = os.environ["TG_TOKEN"]
 CHAT = os.environ.get("TG_ALLOWED", "").split(",")[0]
 DOMAIN = "__DOMAIN__"
 WORKDIR = "__WORKDIR__"
-SERVICES = ["brief.timer", "clean-screens.timer", "nginx", "code-server@root", "brain-auth", "tg-bot", "syncthing@root", "fail2ban", "me-publish.path"]
+SERVICES = ["brief.timer", "clean-screens.timer", "nginx", "code-server@root", "brain-auth", "tg-bot", "syncthing@root", "fail2ban", "me-publish.path", "xray"]
 # Баланс VDSina: известная точка и расход в день. После пополнения обновить (или скажите агенту).
 BALANCE = {"date": "__ДАТА_ПОПОЛНЕНИЯ__", "usd": __БАЛАНС_USD__, "per_day": 0.67}
 CLAUDE_TOKEN_UNTIL = "__ДАТА_ОКОНЧАНИЯ_КЛЮЧА__"
