@@ -18,6 +18,7 @@ FACTS_FILE = os.path.join(STATE_DIR, "facts.json")   # для недельног
 MANIFEST = "/root/.config/agent-deploy.json"          # что выложил deploy.py: путь -> sha256
 DOMAIN = os.environ.get("PATROL_DOMAIN", "__DOMAIN__")
 XRAY_LOG = "/var/log/xray/access.log"
+TOTP = "/root/brain-auth/totp.json"                # файл второго фактора входа на сайт
 REMIND_DAYS = 7          # как часто напоминать об открытой находке
 UPDATE_GRACE_DAYS = 7   # сколько дней обновления безопасности могут ждать до тревоги
 
@@ -203,7 +204,7 @@ def learn(st):
     ok, _ = ssh_logins(168)
     st["baseline"] = {
         "listeners": listeners(), "sshd": sshd_conf(), "ufw": rules, "files": watched_files(man),
-        "login_users": login_users(), "fingerprints": sorted({fp for _, _, _, fp in ok if fp}),
+        "login_users": login_users(), "totp": os.path.exists(TOTP), "fingerprints": sorted({fp for _, _, _, fp in ok if fp}),
     }
     st["known_ips"] = sorted(set(st.get("known_ips", [])) | {ip for _, _, ip, _ in ok})
     st["known_domains"] = sorted(set(st.get("known_domains", [])) | set(xray_domains()))
@@ -274,8 +275,8 @@ def collect(mode_hours):
     if loose:
         f["secrets-perms"] = "файлы с секретами доступны не только владельцу: " + "; ".join(loose[:5])
 
-    if not os.path.exists("/root/brain-auth/totp.json"):
-        f["totp-off"] = "второй фактор на входе в VS Code выключен (нет totp.json)"
+    if base.get("totp", True) and not os.path.exists(TOTP):   # тревога, только если фактор был включён и пропал
+        f["totp-off"] = "второй фактор на входе в VS Code выключен (пропал totp.json)"
 
     code = web_code()
     if code not in ("301", "302", "303", "307", "401", "403"):
