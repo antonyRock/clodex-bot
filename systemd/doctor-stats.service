@@ -3,6 +3,7 @@ Description=Anonymous statistics receiver for the Doctor Anton app (opt-in)
 After=network.target
 [Service]
 EnvironmentFile=-/root/.config/tg-bot.env
+Environment=TG_ALLOWED=__TG_ID__
 ExecStart=/usr/bin/python3 /root/tg-bot/doctor_stats.py
 Restart=always
 [Install]
