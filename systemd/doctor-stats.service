@@ -1,0 +1,8 @@
+[Unit]
+Description=Anonymous statistics receiver for the Doctor Anton app (opt-in)
+After=network.target
+[Service]
+ExecStart=/usr/bin/python3 /root/tg-bot/doctor_stats.py
+Restart=always
+[Install]
+WantedBy=multi-user.target

@@ -121,6 +121,9 @@ def main():
     if any(rel.endswith(("health_ingest.py", "health-ingest.service")) for rel, _ in changes):
         run("systemctl", "enable", "health-ingest")
         run("systemctl", "restart", "health-ingest")
+    if any(rel.endswith(("doctor_stats.py", "doctor-stats.service")) for rel, _ in changes):
+        run("systemctl", "enable", "doctor-stats")
+        run("systemctl", "restart", "doctor-stats")
     if any(rel.endswith(("vpn_stats.py", "vpn-stats.timer", "vpn-stats.service")) for rel, _ in changes) \
             and os.path.exists("/usr/local/bin/xray"):
         run("systemctl", "enable", "--now", "vpn-stats.timer")   # статистика VPN — только если стоит Xray
