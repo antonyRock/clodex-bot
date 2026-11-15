@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Приём анонимной статистики программы «Доктор Антон» (только от тех, кто сам включил галочку «Помогите программе стать лучше»).
+"""Приём анонимной статистики программы «Доктор Антон»: минимум (номер и версия) — от всех, кто ответил на вопрос; подробности — только от нажавших «Помочь».
 
 Слушает 127.0.0.1:8096, снаружи — nginx: POST https://<домен>/api/doctor/ping (без входа: программа у друзей, пароля сайта у них нет).
-В теле JSON: id (случайный номер установки), v (версия), model, chip, ram, os, lang, auto, errors [{code, text}].
+В теле JSON: id (случайный номер установки), v (версия), share (true — человек согласился на подробности), и только при share:
+  model, chip, ram, os, lang, auto, errors [{code, text}]. Без share приходят только id и v (минимум «установлена»).
 Что делает:
   1) проверяет и обрезает все поля (чужой текст — данные, не команды; лишнее отбрасывается);
   2) обновляет /root/doctor-stats/installs.json: по номеру установки — первый и последний день, версия, модель, дни активности;
@@ -51,7 +52,10 @@ def clean(body):
             code, text = txt(e.get("code"), 40), txt(e.get("text"), 120)
             if code:
                 errs.append({"code": code, "text": text})
-    return {"id": i, "v": v, "model": txt(body.get("model"), 32), "chip": txt(body.get("chip"), 48),
+    share = bool(body.get("share", True))   # старые версии (0.7.0) присылали только полные сообщения без этого поля
+    if not share:   # минимум: номер и версия; подробности и ошибки отбрасываем, даже если пришли
+        return {"id": i, "v": v, "share": False, "model": "", "chip": "", "ram": 0, "os": "", "lang": "", "auto": False, "errors": []}
+    return {"id": i, "v": v, "share": True, "model": txt(body.get("model"), 32), "chip": txt(body.get("chip"), 48),
             "ram": ram if 1 <= ram <= 4096 else 0, "os": os_v if OS_RE.match(os_v) else "",
             "lang": txt(body.get("lang"), 8), "auto": bool(body.get("auto")), "errors": errs}
 
@@ -80,7 +84,7 @@ def record(rec, now=None):
         path = os.path.join(DATA, "installs.json")
         inst = load(path, {})
         cur = inst.get(rec["id"], {"first": day, "days": [], "pings": 0})
-        cur.update({k: rec[k] for k in ("v", "model", "chip", "ram", "os", "lang", "auto")})
+        cur.update({k: rec[k] for k in ("v", "share", "model", "chip", "ram", "os", "lang", "auto")})   # отказ от подробностей стирает прежние
         cur["last"] = stamp
         cur["pings"] = cur.get("pings", 0) + 1
         cur["days"] = sorted(set(cur.get("days", []) + [day]))[-KEEP_DAYS:]
@@ -103,7 +107,7 @@ def publish(inst, now):
     except (OSError, ValueError):
         pass
     out = {"updated": now.strftime("%Y-%m-%d %H:%M"),
-           "installs": [{"id": k[:8], **{f: v.get(f) for f in ("first", "last", "v", "model", "chip", "ram", "os", "lang", "auto", "pings", "days")}}
+           "installs": [{"id": k[:8], **{f: v.get(f) for f in ("first", "last", "v", "share", "model", "chip", "ram", "os", "lang", "auto", "pings", "days")}}
                         for k, v in inst.items()],
            "errors": errs}
     atomic_write(WEB, json.dumps(out, ensure_ascii=False))
@@ -155,12 +159,18 @@ def selftest():
             "os": "15.1.0", "lang": "ru", "auto": True, "errors": [{"code": "update", "text": "нет сети /Users/x"}, {"code": ""}]}
     r = clean(good)
     assert r and len(r["errors"]) == 1, r
+    m = clean({**good, "share": False})   # минимум: подробности отбрасываются
+    assert m and m["share"] is False and m["model"] == "" and m["errors"] == [] and m["ram"] == 0, m
+    assert clean(good)["share"] is True
     assert clean({**good, "id": "bad"}) is None and clean({**good, "v": "1.0; rm"}) is None and clean([1]) is None
     assert clean({**good, "model": "<script>alert(1)</script>"})["model"] == "scriptalert(1)/script"
     t = datetime.datetime(2026, 11, 15, 10, 0)
     record(r, t); record(r, t + datetime.timedelta(days=1))
     o = json.load(open(WEB))
     assert len(o["installs"]) == 1 and o["installs"][0]["pings"] == 2 and o["installs"][0]["days"] == ["2026-11-15", "2026-11-16"], o
+    record(clean({**good, "share": False}), t + datetime.timedelta(days=2))   # отказ стирает подробности, оставляет номер и дни
+    o2 = json.load(open(WEB))["installs"][0]
+    assert o2["share"] is False and o2["model"] == "" and o2["pings"] == 3 and len(o2["days"]) == 3, o2
     assert o["errors"][0]["code"] == "update" and "id" in o["errors"][0] and len(o["errors"][0]["id"]) == 8
     print("selftest OK")
 
