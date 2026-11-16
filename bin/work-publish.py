@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Кладёт рабочие пульты на сайт: свежий Clodex.Work и свежие пульты проектов → /var/www/work/ (та же раскладка папок,
-чтобы ссылки между пультами работали); /work/ открывает свежий Clodex.Work. Документы проектов не копируются — только пульты."""
-import os, pathlib, re, shutil, urllib.parse
+чтобы ссылки между пультами работали); /work/ сам показывает свежий Clodex.Work (без перехода на адрес с версией). Документы проектов не копируются — только пульты."""
+import os, pathlib, re, shutil
 KEEP_VERSIONS = 20   # сколько последних версий каждого пульта хранить для отката
 SRC = pathlib.Path("__WORKDIR__/__ПАПКА_РАБОЧЕГО_ПУЛЬТА__").parent   # папка рабочих проектов
 DST = pathlib.Path("/var/www/work")
@@ -43,8 +43,10 @@ for f in (DST / "versions").glob("*/*.html"):
     if f not in arch:
         f.unlink()
 if home:
-    url = urllib.parse.quote(home)
-    (DST / "index.html").write_text(f'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url={url}">'
-                                    f'<a href="{url}">Clodex.Work</a>', encoding="utf-8")
-    os.chmod(DST / "index.html", 0o644)
+    # /work/ показывает сам свежий Clodex.Work, без перехода на адрес с версией: адрес в строке браузера
+    # и у значка на iPhone всегда /work/ (просьба владельца, 2026-11-16). Пульт лежит в папке на уровень ниже,
+    # поэтому ссылки "../Папка/…" в копии становятся "Папка/…" — относительно /work/.
+    html = (DST / home).read_text(encoding="utf-8").replace('"../', '"')
+    tmp = DST / "index.html.tmp"
+    tmp.write_text(html, encoding="utf-8"); os.chmod(tmp, 0o644); tmp.replace(DST / "index.html")
 print("published", len(keep), "пультов, в архиве", len(arch), "версий; главная:", home)
