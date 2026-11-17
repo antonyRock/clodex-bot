@@ -604,3 +604,196 @@ def summary(text, client="приложение"):
     with open(path, "a", encoding="utf-8") as f:
         f.write(f"\n### Итог · {t:%Y-%m-%d %H:%M} · {client}\n{text.strip()}\n")
     return f"✅ Итог записан в журнал чатов: {A.rel(path)}"
+
+
+# ── Быстрые команды по делам: одна команда вместо десятка чтений и правок (голос, телефон) ──────────────
+# Правила — «04_Системные файлы/07_Задачи и проекты — правила.md»: строка `- [s] ID · срок · проект · суть · кто`,
+# вложенные строки с двумя пробелами; закрытие — статус, «закрыта: дата — …», перенос в архив в тот же день.
+ARCHIVE = "04_Архив.md"
+OPEN_ST = " /!?~"
+ID_LETTER = {"личные": "Л", "рабочие": "Р", "система": "С"}
+_task_lock = threading.Lock()
+
+
+def _words(s):
+    return [w[:5] for w in re.findall(r"[a-zа-яё0-9]+", (s or "").lower().replace("ё", "е")) if len(w) >= 3 or w.isdigit()]
+
+
+def _blocks(text):
+    """[(начало, конец, первая строка)] — дело со вложенными строками."""
+    lines = text.split("\n")
+    res, i = [], 0
+    while i < len(lines):
+        if re.match(r"^- \[.\] [ЛРС]-\d+ · ", lines[i]):
+            j = i + 1
+            while j < len(lines) and lines[j].startswith("  "):
+                j += 1
+            res.append((i, j, lines[i]))
+            i = j
+        else:
+            i += 1
+    return lines, res
+
+
+def _find_task(query, min_score=0.6):
+    """Открытое дело по номеру или по словам из сути. Одно уверенное совпадение — дело; иначе GuardError со списком."""
+    q = (query or "").strip()
+    if not q:
+        raise GuardError("Скажите, какое дело: несколько слов из сути или номер.")
+    cands = []
+    for sp, fn in TASK_FILES.items():
+        real = os.path.join(A.WORKDIR, TASK_DIR, fn)
+        if not os.path.isfile(real):
+            continue
+        lines, blocks = _blocks(_read_text(real))
+        for b in blocks:
+            m = re.match(r"^- \[(.)\] (\S+) · (.*)$", b[2])
+            if not m or m.group(1) not in OPEN_ST:
+                continue
+            tid, f = m.group(2), m.group(3).split(" · ")
+            title = " · ".join(f[2:-1]) if len(f) >= 4 else m.group(3)
+            if q.upper() == tid:
+                return sp, real, b, tid, title
+            qw = set(_words(q))
+            if not qw:
+                continue
+            extra = " ".join(lines[b[0] + 1:b[1]])
+            tw, ew = set(_words(title + " " + (f[1] if len(f) >= 4 else ""))), set(_words(extra))
+            score = (len(qw & tw) + 0.5 * len(qw & (ew - tw))) / len(qw)
+            if score > 0:
+                cands.append((score, sp, real, b, tid, title, f[0] if f else ""))
+    cands.sort(key=lambda c: -c[0])
+    if cands and cands[0][0] >= min_score and (len(cands) == 1 or cands[0][0] - cands[1][0] >= 0.25):
+        c = cands[0]
+        return c[1], c[2], c[3], c[4], c[5]
+    if not cands or cands[0][0] < 0.3:
+        raise GuardError(f"Открытого дела по словам «{q}» не нашёл. Уточните суть или посмотрите clodex_tasks.")
+    opts = "\n".join(f"- {c[4]} · {c[6]} · {c[5]}" for c in cands[:5])
+    raise GuardError("Подходит несколько дел — спросите, какое имелось в виду, и повторите с номером:\n" + opts)
+
+
+def _save_many(changes, run=None):
+    """[(real, старый текст, новый текст)] — копии, запись, журнал; пересборка один раз в конце."""
+    for real, old, new in changes:
+        backup(real)
+        atomic_write(real, new)
+        calllog(op="write", path=A.rel(real), before=sha(old) if old is not None else None, after=sha(new))
+    return post_write(*[c[0] for c in changes], run=run)
+
+
+def task_close(query, note="", cancel=False, run=None):
+    with _task_lock:
+        sp, real, b, tid, title = _find_task(query)
+        text = _read_text(real)
+        lines, _ = _blocks(text)
+        block = lines[b[0]:b[1]]
+        today = now().date().isoformat()
+        block[0] = re.sub(r"^- \[.\]", "- [-]" if cancel else "- [x]", block[0])
+        block.append(f"  - {'отменена' if cancel else 'закрыта'}: {today}" + (f" — {one_line(note)}" if note else ""))
+        rest = lines[:b[0]] + lines[b[1]:]
+        if b[0] > 0 and b[0] < len(rest) and not rest[b[0] - 1].strip() and not rest[b[0]].strip():
+            del rest[b[0]]                                  # не оставлять двойную пустую строку
+        arch = os.path.join(A.WORKDIR, TASK_DIR, ARCHIVE)
+        a_old = _read_text(arch) if os.path.isfile(arch) else "# Архив задач\n"
+        month = "## " + today[:7]
+        heads = [l for l in a_old.split("\n") if l.startswith("## ")]
+        a_new = a_old.rstrip("\n") + "\n" + ("" if heads and heads[-1].strip() == month else f"\n{month}\n\n") + \
+            "\n".join(block) + "\n"
+        rb = _save_many([(arch, a_old if os.path.isfile(arch) else None, a_new), (real, text, "\n".join(rest))], run=run)
+    return (f"✅ {'Отменено' if cancel else 'Закрыто'} и перенесено в архив: {title} (сфера: {sp}). "
+            f"Если к делу было напоминание — clodex_remind_cancel.") + rb
+
+
+def task_move(query, due, note="", run=None):
+    due = (due or "").strip()
+    if due != "без срока":
+        try:
+            date.fromisoformat(due)
+        except ValueError:
+            raise GuardError("Срок — ГГГГ-ММ-ДД или «без срока». «В пятницу» переведите в дату по сегодняшней (clodex_start).")
+    with _task_lock:
+        sp, real, b, tid, title = _find_task(query)
+        text = _read_text(real)
+        lines, _ = _blocks(text)
+        m = re.match(r"^(- \[.\] \S+ · )([^·]+?)( · .*)$", lines[b[0]])
+        if not m:
+            raise GuardError("Строка дела не по формату — поправьте через clodex_edit.")
+        was = m.group(2).strip()
+        lines[b[0]] = m.group(1) + due + m.group(3)
+        if note:
+            lines.insert(b[1], f"  - заметка: {now().date().isoformat()} срок {was} → {due} — {one_line(note)}")
+        new = "\n".join(lines)
+        rb = _save_many([(real, text, new)], run=run)
+    return f"✅ Срок перенесён: {title} — было {was}, стало {due} (сфера: {sp})." + rb
+
+
+def _projects():
+    real = os.path.join(A.WORKDIR, "03_Проекты/00_Реестр проектов.md")
+    if not os.path.isfile(real):
+        return {}
+    return {m.group(1): (m.group(2).strip(), (m.group(3) or "").strip().lower()) for m in
+            re.finditer(r"^\| ([a-z0-9][a-z0-9_-]*) \| ([^|]+)\|(?: ([^|]+)\|)?", _read_text(real), re.M)}
+
+
+PROJECT_SPHERE = {"личный": "личные", "рабочий": "рабочие", "система": "система"}
+
+
+def _next_id(letter):
+    mx = 0
+    for fn in list(TASK_FILES.values()) + [ARCHIVE]:
+        real = os.path.join(A.WORKDIR, TASK_DIR, fn)
+        if os.path.isfile(real):
+            mx = max([mx] + [int(n) for n in re.findall(rf"\b{letter}-(\d+)\b", _read_text(real))])
+    return f"{letter}-{mx + 1:03d}"
+
+
+def task_add(title, sphere, due="без срока", project="—", who="__ИМЯ__", note="", source="приложение", force=False, run=None):
+    title, who = one_line(title), one_line(who) or "__ИМЯ__"
+    sphere = (sphere or "").strip().lower()
+    if sphere not in TASK_FILES:
+        raise GuardError("Сфера — личные, рабочие или система.")
+    if len(title) < 5 or "·" in title:
+        raise GuardError("Суть — одно действие с глагола, без знака «·».")
+    due = (due or "без срока").strip()
+    if due != "без срока":
+        try:
+            date.fromisoformat(due)
+        except ValueError:
+            raise GuardError("Срок — ГГГГ-ММ-ДД или «без срока». Срок без слов владельца не придумывайте.")
+    project = (project or "—").strip()
+    projects = _projects()
+    if project != "—" and project not in projects:
+        raise GuardError(f"Проекта «{project}» нет в реестре (03_Проекты/00_Реестр проектов.md). Укажите код из реестра или «—».")
+    if project != "—":                                   # сфера дела = сфера проекта (правило базы)
+        sphere = PROJECT_SPHERE.get(projects[project][1], sphere)
+    with _task_lock:
+        if not force:
+            try:
+                _, _, _, _, same = _find_task(title, min_score=0.8)   # дубль — почти те же слова
+                raise GuardError(f"Похожее открытое дело уже есть: «{same}». Обновите его (clodex_task_move, clodex_edit) "
+                                 f"или, если это точно другое, повторите с force=true.")
+            except GuardError as e:
+                if str(e).startswith("Похожее"):
+                    raise
+        real = os.path.join(A.WORKDIR, TASK_DIR, TASK_FILES[sphere])
+        text = _read_text(real) if os.path.isfile(real) else ""
+        tid = _next_id(ID_LETTER[sphere])
+        today = now().date().isoformat()
+        block = [f"- [ ] {tid} · {due} · {project} · {title} · {who}"] + \
+            ([f"  - заметка: {one_line(note)}"] if note else []) + \
+            [f"  - добавлена: {today}", f"  - источник: {one_line(source)}, {today}"]
+        lines = text.split("\n") if text else []
+        head = f"## {project} — " if project != "—" else "## Без проекта"
+        hi = next((i for i, l in enumerate(lines) if l.startswith(head)), None)
+        if hi is None:
+            new_head = head if project == "—" else f"## {project} — {projects[project][0]}"
+            lines = (lines[:-1] if lines and not lines[-1] else lines) + ["", new_head, ""] + block + [""]
+        else:
+            j = hi + 1                                     # конец группы: до следующего «## »
+            while j < len(lines) and not lines[j].startswith("## "):
+                j += 1
+            while j > hi + 1 and not lines[j - 1].strip():
+                j -= 1
+            lines[j:j] = block
+        rb = _save_many([(real, text or None, "\n".join(lines))], run=run)
+    return f"✅ Добавлено дело: {title} · срок {due} · проект {project} (сфера: {sphere})." + rb

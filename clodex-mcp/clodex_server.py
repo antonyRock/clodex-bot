@@ -144,7 +144,7 @@ def build(auth=None):
                            due_before: Annotated[str, Field(description="Только дела со сроком не позже этой даты, ГГГГ-ММ-ДД")] = "",
                            waiting_for_anton: Annotated[bool, Field(description="Только то, где нужен сам __ИМЯ__: он исполнитель, есть вопрос или блокер")] = False,
                            include_done: Annotated[bool, Field(description="Показывать и закрытые")] = False) -> str:
-        """Открытые дела __ИМЯ_Р__ из единой базы задач: личные, рабочие, системные. Звать на «что висит», «какие дела», «что по проекту X», «что срочно». Номера дел служебные — __ИМЯ_Д__ называй дело текстом, не номером. Чтобы изменить или закрыть дело — clodex_edit строки в файле дел (01_Главный контекст/05_Задачи/), после правки база проверится и пульты пересоберутся сами."""
+        """Открытые дела __ИМЯ_Р__ из единой базы задач: личные, рабочие, системные. Звать на «что висит», «какие дела», «что по проекту X», «что срочно». Номера дел служебные — __ИМЯ_Д__ называй дело текстом, не номером. Закрыть, перенести, добавить дело — clodex_task_close, clodex_task_move, clodex_task_add (одна команда, быстро); прочие правки — clodex_edit строки в файле дел (01_Главный контекст/05_Задачи/). После правки база проверится и пульты пересоберутся сами."""
         return await call("clodex_tasks", question, f"{sphere} {project}".strip(),
                           lambda: T.tasks(sphere, project, due_before, waiting_for_anton, include_done))
 
@@ -160,6 +160,32 @@ def build(auth=None):
                           replace_all: Annotated[bool, Field(description="Заменить все вхождения")] = False) -> str:
         """Точечно заменить фрагмент в файле базы __ИМЯ_Р__ (как Edit). Перед правкой прочитай файл. Факты и решения __ИМЯ_Р__ записывай сразу, без вопроса «записать?», и в ответе скажи, куда записал. Старая версия сохраняется. После правки дел, реестра проектов или финансов сервер сам проверяет базу и пересобирает пульты — результат в ответе, ошибки исправь. Скрипты, корневой CLAUDE.md, доступы закрыты."""
         return await call("clodex_edit", question, path, lambda: T.edit(path, old, new, replace_all))
+
+    @mcp.tool(name="clodex_task_close")
+    async def clodex_task_close(question: Q, task: Annotated[str, Field(description="Какое дело: несколько слов из сути (как сказал __ИМЯ__) или номер дела")],
+                                note: Annotated[str, Field(description="Коротко, почему закрыто, со слов __ИМЯ_Р__, например «отправил Stanley»")] = "",
+                                cancel: Annotated[bool, Field(description="true — отменено («уже не надо»), false — выполнено")] = False) -> str:
+        """Закрыть дело __ИМЯ_Р__ одной командой: «сделал», «закрой», «уже не надо». Сервер сам найдёт дело по словам, поставит статус и дату закрытия, перенесёт в архив, проверит базу и пересоберёт пульты. Быстрее, чем читать файлы дел и править вручную — используй это, а не clodex_edit. Если подходит несколько дел — вернёт список: спроси, какое, и повтори с номером."""
+        return await call("clodex_task_close", question, task[:60], lambda: T.task_close(task, note, cancel))
+
+    @mcp.tool(name="clodex_task_move")
+    async def clodex_task_move(question: Q, task: Annotated[str, Field(description="Какое дело: несколько слов из сути или номер")],
+                               due: Annotated[str, Field(description="Новый срок ГГГГ-ММ-ДД или «без срока». «В пятницу» переведи в дату по сегодняшней")],
+                               note: Annotated[str, Field(description="Почему перенесли, со слов __ИМЯ_Р__ (необязательно)")] = "") -> str:
+        """Перенести срок дела __ИМЯ_Р__ одной командой («перенеси на пятницу», «сдвинь на 25-е»). Срок — только тот, что назвал __ИМЯ__. Сервер найдёт дело, поменяет срок, проверит базу и пересоберёт пульты."""
+        return await call("clodex_task_move", question, f"{task[:50]} → {due}", lambda: T.task_move(task, due, note))
+
+    @mcp.tool(name="clodex_task_add")
+    async def clodex_task_add(question: Q, title: Annotated[str, Field(description="Суть: одно действие с глагола, например «Позвонить Насте про договор»")],
+                              sphere: Annotated[str, Field(description="личные, рабочие или система")],
+                              due: Annotated[str, Field(description="Срок ГГГГ-ММ-ДД, если __ИМЯ__ его назвал; иначе «без срока»")] = "без срока",
+                              project: Annotated[str, Field(description="Код проекта из реестра (clodex_start, реестр проектов) или «—»")] = "—",
+                              who: Annotated[str, Field(description="Кто делает: __ИМЯ__, агент или имя человека")] = "__ИМЯ__",
+                              note: Annotated[str, Field(description="Подробность одной строкой (необязательно)")] = "",
+                              force: Annotated[bool, Field(description="true — завести, даже если есть похожее дело (только если __ИМЯ__ подтвердил, что это другое)")] = False) -> str:
+        """Добавить дело __ИМЯ_Р__ одной командой («запиши дело», «напомни себе сделать»). Сервер даст номер, положит в нужный файл и раздел проекта, проверит похожие дела (если есть — вернёт его, чтобы обновить, а не плодить дубль), проверит базу и пересоберёт пульты."""
+        return await call("clodex_task_add", question, title[:60],
+                          lambda: T.task_add(title, sphere, due, project, who, note, source=f"голос/приложение ({client_name()})", force=force))
 
     @mcp.tool(name="clodex_write")
     async def clodex_write(question: Q, path: Annotated[str, Field(description="Путь от корня Claude_AI; папка должна быть внутри 01_–06_")],

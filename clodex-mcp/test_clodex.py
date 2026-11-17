@@ -197,6 +197,67 @@ class TestTools(Base):
             T.email_draft("a@b.ru", "тема\nBcc: x@y.ru", "б")
 
 
+class TestTaskCommands(Base):
+    """Быстрые команды по делам — на отдельной копии файлов дел."""
+
+    def setUp(self):
+        self.lp = put("01_Главный контекст/05_Задачи/01_Личные.md",
+                      "# Личные\n\n## t6d — T6D\n\n- [ ] Л-010 · 2026-11-20 · t6d · Прислать Стэнли характеристики камеры P8 Go · __ИМЯ__\n"
+                      "  - с кем: Stanley\n\n- [ ] Л-011 · без срока · t6d · Позвонить Насте про договор · __ИМЯ__\n"
+                      "- [ ] Л-012 · без срока · t6d · Позвонить Насте про склад · __ИМЯ__\n\n## Без проекта\n\n"
+                      "- [x] Л-013 · без срока · — · Старое закрытое · __ИМЯ__\n")
+        self.ap = put("01_Главный контекст/05_Задачи/04_Архив.md", "# Архив задач\n\n## 2026-10\n\n- [x] Л-020 · без срока · — · Давнее · __ИМЯ__\n")
+        put("03_Проекты/00_Реестр проектов.md", "| Код | Название | Сфера |\n|---|---|---|\n| t6d | T6D | Рабочий |\n| me | Личное | Личный |\n")
+        self.run_ = lambda: (True, ["проверка ок"])
+
+    def txt(self, p):
+        return open(p, encoding="utf-8").read()
+
+    def test_close_by_words(self):
+        r = T.task_close("характеристики камеры для стэнли", "отправил", run=self.run_)
+        self.assertIn("Закрыто", r)
+        self.assertNotIn("Л-010", self.txt(self.lp))
+        a = self.txt(self.ap)
+        self.assertIn("- [x] Л-010", a)
+        self.assertIn("  - с кем: Stanley", a)
+        self.assertRegex(a, r"закрыта: \d{4}-\d{2}-\d{2} — отправил")
+        self.assertIn("## " + T.now().date().isoformat()[:7], a)
+        self.assertIn("Л-011", self.txt(self.lp))
+
+    def test_ambiguous_and_missing(self):
+        with self.assertRaises(GuardError) as e:
+            T.task_close("позвонить насте", run=self.run_)
+        self.assertIn("несколько", str(e.exception))
+        with self.assertRaises(GuardError):
+            T.task_close("купить слона", run=self.run_)
+        with self.assertRaises(GuardError):        # закрытое не трогаем
+            T.task_close("Л-013", run=self.run_)
+        T.task_close("Л-012", cancel=True, run=self.run_)
+        self.assertIn("- [-] Л-012", self.txt(self.ap))
+
+    def test_move(self):
+        r = T.task_move("насте про договор", "2026-12-05", "попросил перенести", run=self.run_)
+        self.assertIn("было без срока, стало 2026-12-05", r)
+        self.assertIn("- [ ] Л-011 · 2026-12-05 · t6d · Позвонить Насте про договор", self.txt(self.lp))
+        with self.assertRaises(GuardError):
+            T.task_move("насте про договор", "в пятницу", run=self.run_)
+
+    def test_add(self):
+        r = T.task_add("Купить фильтр для воды", "личные", "2026-11-30", "me", run=self.run_)
+        self.assertIn("Добавлено", r)
+        t = self.txt(self.lp)
+        self.assertIn("## me — Личное", t)
+        self.assertIn("- [ ] Л-021 · 2026-11-30 · me · Купить фильтр для воды · __ИМЯ__", t)   # номер — после архива
+        T.task_add("Отправить Насте договор", "личные", project="me", run=self.run_)
+        self.assertIn("- [ ] Л-022 · без срока · me · Отправить Насте договор", self.txt(self.lp))
+        with self.assertRaises(GuardError):
+            T.task_add("Купить фильтр для воды", "личные", run=self.run_)               # дубль
+        with self.assertRaises(GuardError):
+            T.task_add("Сделать что-то", "личные", project="nope", run=self.run_)
+        T.task_add("Проверить отчёт по терминалам", "личные", project="t6d", run=self.run_)   # t6d — рабочий
+        self.assertIn("Проверить отчёт по терминалам", self.txt(os.path.join(WORK, "01_Главный контекст/05_Задачи/02_Рабочие.md")))
+
+
 class TestServer(Base):
     """Настоящий MCP-клиент в памяти: схема инструментов, подсказки, отказ чужому."""
 
@@ -219,7 +280,7 @@ class TestServer(Base):
             async with Client(self.mcp) as c:
                 return await c.list_tools()
         tools = {t.name: t for t in self.run_async(go())}
-        self.assertEqual(len(tools), 16)
+        self.assertEqual(len(tools), 19)
         for name in ("clodex_start", "clodex_read", "clodex_search", "clodex_tasks", "clodex_list", "clodex_status", "clodex_reminders"):
             self.assertTrue(tools[name].annotations.readOnlyHint, name)
         for name in ("clodex_edit", "clodex_write", "clodex_append", "clodex_move"):
