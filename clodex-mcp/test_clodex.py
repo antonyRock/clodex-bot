@@ -258,6 +258,33 @@ class TestTaskCommands(Base):
         self.assertIn("Проверить отчёт по терминалам", self.txt(os.path.join(WORK, "01_Главный контекст/05_Задачи/02_Рабочие.md")))
 
 
+class TestAskAgent(Base):
+    def test_ask_agent_resume_and_env(self):
+        calls = []
+
+        class P:
+            def __init__(self, out): self.stdout, self.stderr = out, ""
+
+        def fake(cmd, **kw):
+            calls.append((cmd, kw))
+            return P(json.dumps({"result": "Дел на сегодня нет.", "session_id": "sess-1", "num_turns": 2, "is_error": False}))
+        os.environ["TG_TOKEN"] = "секрет"
+        try:
+            r1 = T.ask_agent("какие дела?", "conv-A", "говори кратко", run=fake)
+            r2 = T.ask_agent("а завтра?", "conv-A", run=fake)
+        finally:
+            os.environ.pop("TG_TOKEN", None)
+        self.assertEqual(r1, "Дел на сегодня нет.")
+        self.assertNotIn("--resume", calls[0][0])
+        self.assertEqual(calls[1][0][calls[1][0].index("--resume") + 1], "sess-1")       # тот же разговор — та же сессия
+        self.assertNotIn("TG_TOKEN", calls[0][1]["env"])                                 # секреты агенту не передаются
+        self.assertEqual(calls[0][1]["cwd"], A.WORKDIR)
+        self.assertIn("говори кратко", calls[0][0][calls[0][0].index("--append-system-prompt") + 1])
+        self.assertNotIn("Bash", " ".join(c for c in calls[0][0] if c.startswith("Bash(rm")))
+        with self.assertRaises(GuardError):
+            T.ask_agent("", run=fake)
+
+
 class TestServer(Base):
     """Настоящий MCP-клиент в памяти: схема инструментов, подсказки, отказ чужому."""
 
@@ -280,7 +307,7 @@ class TestServer(Base):
             async with Client(self.mcp) as c:
                 return await c.list_tools()
         tools = {t.name: t for t in self.run_async(go())}
-        self.assertEqual(len(tools), 19)
+        self.assertEqual(len(tools), 20)
         for name in ("clodex_start", "clodex_read", "clodex_search", "clodex_tasks", "clodex_list", "clodex_status", "clodex_reminders"):
             self.assertTrue(tools[name].annotations.readOnlyHint, name)
         for name in ("clodex_edit", "clodex_write", "clodex_append", "clodex_move"):
@@ -288,6 +315,18 @@ class TestServer(Base):
         for t in tools.values():
             self.assertIn("question", t.inputSchema["required"], t.name)
             self.assertLessEqual(len(t.name), 64)
+
+    def test_ask_agent_only_speaker(self):
+        from fastmcp import Client
+        from fastmcp.exceptions import ToolError
+        self.S.owner_check = lambda *a: None
+
+        async def go():
+            async with Client(self.mcp) as c:
+                return await c.call_tool("clodex_ask_agent", {"question": "q"})
+        with self.assertRaises(ToolError) as e:
+            self.run_async(go())
+        self.assertIn("только для колонки", str(e.exception))
 
     def test_denied_without_owner(self):
         from fastmcp import Client

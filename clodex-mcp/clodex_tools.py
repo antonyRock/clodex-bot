@@ -797,3 +797,69 @@ def task_add(title, sphere, due="без срока", project="—", who="__ИМ�
             lines[j:j] = block
         rb = _save_many([(real, text or None, "\n".join(lines))], run=run)
     return f"✅ Добавлено дело: {title} · срок {due} · проект {project} (сфера: {sphere})." + rb
+
+
+# ── Агент для голосовой колонки: вопрос → Claude Code в папке базы (по подписке) → короткий ответ для озвучки ─────────
+CLAUDE_BIN = os.environ.get("CLODEX_CLAUDE") or "/root/.local/bin/claude"
+AGENT_MODEL = os.environ.get("CLODEX_AGENT_MODEL") or "claude-opus-5-5"
+AGENT_EFFORT = os.environ.get("CLODEX_AGENT_EFFORT") or "low"
+AGENT_STATE = os.path.join(LOG_DIR, "speaker-agent.json")       # разговор колонки → сессия Claude (для --resume)
+VOICE_SYS = ("Ты отвечаешь __ИМЯ_Д__ голосом через колонку: твой ответ голосовая модель перескажет вслух. "
+             "Отвечай коротко, 1–3 фразы, обычной речью: без списков, таблиц, ссылок, разметки, номеров задач. "
+             "Делай ровно то, о чём спросили, за наименьшее число шагов; триггеры начала разговора из правил базы "
+             "(баланс опор, «что дальше», итоги) не выполняй. Правки базы — по её правилам; после правки одной фразой скажи, что сделал. "
+             "Если пунктов много — назови 2–3 и спроси, продолжать ли. Речь распознана автоматически: неясное имя, дату, сумму — переспроси.")
+_agent_lock = threading.Lock()
+SECRET_ENV = ("TG_TOKEN", "MAIL_PASS", "MAIL_USER", "YA_PASS", "APPLE_PASS", "GITHUB_CLIENT_SECRET",
+              "CLODEX_JWT_KEY", "CLODEX_STORE_KEY", "CLODEX_SPEAKER_TOKEN")
+
+
+def ask_agent(question, conversation="", instructions="", run=None):
+    """Вопрос колонки агенту Claude Code в папке базы. Один разговор колонки = одна сессия Claude (агент помнит контекст)."""
+    question = (question or "").strip()
+    if not question:
+        raise GuardError("Пустой вопрос.")
+    conv = re.sub(r"[^A-Za-z0-9_-]", "", conversation or "")[:64]
+    with _agent_lock:                                     # по одному: подписка и база — общие
+        try:
+            state = json.load(open(AGENT_STATE, encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            state = {}
+        sid = state.get(conv) if conv else None
+        W, C = A.WORKDIR, A.CACHE
+        cmd = [CLAUDE_BIN, "-p", question, "--output-format", "json", "--model", AGENT_MODEL, "--effort", AGENT_EFFORT,
+               "--permission-mode", "default", "--append-system-prompt", VOICE_SYS + ("\n\n" + instructions if instructions else ""),
+               "--allowedTools", f"Read(/{W}/**)", f"Edit(/{W}/**)", f"Read(/{C}/**)", "Glob", "Grep", "WebSearch", "WebFetch"]
+        try:
+            cmd += [f"Bash({c})" for c in _pults().bash_commands()]
+            before = _pults().snapshot()
+        except Exception:  # noqa: BLE001
+            before = None
+        if sid:
+            cmd += ["--resume", sid]
+        env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
+        t0 = time.time()
+        try:
+            p = (run or subprocess.run)(cmd, cwd=W, env=env, capture_output=True, text=True, timeout=150)
+        except subprocess.TimeoutExpired:
+            raise GuardError("Агент не успел ответить за 150 секунд.")
+        try:
+            d = json.loads(p.stdout)
+        except Exception:  # noqa: BLE001
+            raise GuardError("Агент не ответил: " + (p.stderr or p.stdout or "пусто")[-200:])
+        if d.get("is_error"):
+            raise GuardError("Агент вернул ошибку: " + str(d.get("result"))[:200])
+        if conv and d.get("session_id"):
+            state[conv] = d["session_id"]
+            if len(state) > 200:                          # старые разговоры не копим
+                state = dict(list(state.items())[-100:])
+            os.makedirs(LOG_DIR, exist_ok=True)
+            atomic_write(AGENT_STATE, json.dumps(state, ensure_ascii=False))
+        calllog(op="ask_agent", conv=conv, seconds=round(time.time() - t0, 1), turns=d.get("num_turns"))
+        answer = (d.get("result") or "").strip() or "Агент ответил пусто."
+        try:
+            if before is not None and _pults().snapshot() != before:    # агент правил дела — пересобрать пульты, как бот
+                rebuild(wait=5)
+        except Exception:  # noqa: BLE001
+            pass
+        return answer

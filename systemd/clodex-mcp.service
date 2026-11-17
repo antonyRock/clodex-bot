@@ -7,6 +7,8 @@ WorkingDirectory=/root/clodex-mcp
 EnvironmentFile=/root/.config/clodex-mcp.env
 EnvironmentFile=/root/.config/tg-bot.env
 EnvironmentFile=/root/.config/mail.env
+# вход Claude Code по подписке — для clodex_ask_agent (колонка спрашивает агента)
+EnvironmentFile=-/root/.config/claude-token
 Environment=HOME=/root
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=CLODEX_BASE_URL=https://__DOMAIN__

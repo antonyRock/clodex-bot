@@ -187,6 +187,16 @@ def build(auth=None):
         return await call("clodex_task_add", question, title[:60],
                           lambda: T.task_add(title, sphere, due, project, who, note, source=f"голос/приложение ({client_name()})", force=force))
 
+    @mcp.tool(name="clodex_ask_agent")
+    async def clodex_ask_agent(question: Annotated[str, Field(description="Вопрос или поручение __ИМЯ_Р__ дословно, с нужным контекстом разговора")],
+                               conversation: Annotated[str, Field(description="Идентификатор разговора колонки: агент продолжает тот же разговор")] = "",
+                               instructions: Annotated[str, Field(description="Дополнительные правила для ответа голосом (из файла правил колонки)")] = "") -> str:
+        """Только для голосовой колонки __ИМЯ_Р__: передать вопрос агенту Claude Code на сервере (тот же агент, что в боте, по подписке) и вернуть короткий ответ для озвучки."""
+        tok = get_access_token()
+        if not tok or (getattr(tok, "claims", None) or {}).get("client") != "speaker":
+            raise ToolError("Эта команда — только для колонки.")
+        return await call("clodex_ask_agent", question, question[:60], lambda: T.ask_agent(question, conversation, instructions))
+
     @mcp.tool(name="clodex_write")
     async def clodex_write(question: Q, path: Annotated[str, Field(description="Путь от корня Claude_AI; папка должна быть внутри 01_–06_")],
                            content: Annotated[str, Field(description="Полный текст файла")],
