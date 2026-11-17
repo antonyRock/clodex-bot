@@ -5,9 +5,11 @@
 Окружение (файл 600, значения — в Доступы.md, в чат и журналы не выводить):
   GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET — GitHub OAuth App; CLODEX_ALLOWED_LOGIN — единственный разрешённый логин;
   CLODEX_JWT_KEY — подпись токенов (токены переживают перезапуск); CLODEX_STORE_KEY — ключ Fernet для хранилища клиентов;
-  CLODEX_BASE_URL — https://<домен>; TG_TOKEN, MAIL_USER, MAIL_PASS — для Telegram и черновиков писем.
+  CLODEX_BASE_URL — https://<домен>; TG_TOKEN, MAIL_USER, MAIL_PASS — для Telegram и черновиков писем;
+  CLODEX_SPEAKER_TOKEN — постоянный ключ кухонной колонки (необязательно): с ним — только инструменты чтения.
 Правила и порядок работ — «01_План и ТЗ.md» проекта MCP Clodex."""
 import asyncio
+import hmac
 import os
 import sys
 from typing import Annotated
@@ -24,6 +26,22 @@ import clodex_tools as T
 Q = Annotated[str, Field(description="Последнее сообщение __ИМЯ_Р__ дословно (для журнала чатов). Не пересказывай.")]
 RO = {"readOnlyHint": True}
 EXT = {"openWorldHint": True}
+# Кухонная колонка (OpenAI вызывает MCP по постоянному ключу): только чтение, без записи, напоминаний и отправки.
+SPEAKER_TOOLS = {"clodex_start", "clodex_search", "clodex_read", "clodex_list", "clodex_tasks", "clodex_reminders"}
+
+
+def speaker_verifier():
+    """Ключ колонки: сверка без утечки по времени; без CLODEX_SPEAKER_TOKEN — выключено."""
+    from fastmcp.server.auth.auth import AccessToken, TokenVerifier
+
+    class SpeakerVerifier(TokenVerifier):
+        async def verify_token(self, token: str):
+            key = os.environ.get("CLODEX_SPEAKER_TOKEN") or ""
+            if len(key) < 32 or not hmac.compare_digest(token.encode(), key.encode()):
+                return None
+            return AccessToken(token=token, client_id="speaker", scopes=["read:user"], expires_at=None,
+                               claims={"login": os.environ.get("CLODEX_ALLOWED_LOGIN") or "", "client": "speaker"})
+    return SpeakerVerifier(required_scopes=["read:user"])
 
 
 def build_auth():
@@ -37,22 +55,35 @@ def build_auth():
         d = os.environ.get("CLODEX_STATE_DIR") or "/root/clodex-mcp-state"
         os.makedirs(d, mode=0o700, exist_ok=True)
         store = FernetEncryptionWrapper(key_value=FileTreeStore(data_directory=d), fernet=Fernet(key))
-    return GitHubProvider(
+    gh = GitHubProvider(
         client_id=os.environ["GITHUB_CLIENT_ID"], client_secret=os.environ["GITHUB_CLIENT_SECRET"],
         base_url=os.environ["CLODEX_BASE_URL"], jwt_signing_key=os.environ["CLODEX_JWT_KEY"],
         client_storage=store, required_scopes=["read:user"], require_authorization_consent=True)
+    if len(os.environ.get("CLODEX_SPEAKER_TOKEN") or "") < 32:
+        return gh
+    from fastmcp.server.auth import MultiAuth
+    return MultiAuth(server=gh, verifiers={"speaker": speaker_verifier()})
 
 
-def owner_check():
-    """Закрыто по умолчанию: без токена или с чужим логином GitHub — отказ."""
+def owner_check(tool=""):
+    """Закрыто по умолчанию: без токена или с чужим логином GitHub — отказ. Колонке — только чтение."""
     allowed = (os.environ.get("CLODEX_ALLOWED_LOGIN") or "").lower()
     tok = get_access_token()
-    login = str((getattr(tok, "claims", None) or {}).get("login", "")).lower() if tok else ""
+    claims = (getattr(tok, "claims", None) or {}) if tok else {}
+    login = str(claims.get("login", "")).lower()
     if not allowed or not login or login != allowed:
         raise ToolError("Доступ закрыт: коннектор только для владельца.")
+    if claims.get("client") == "speaker" and tool not in SPEAKER_TOOLS:
+        raise ToolError("Кухонной колонке открыто только чтение базы.")
 
 
 def client_name():
+    try:
+        tok = get_access_token()
+        if tok and (getattr(tok, "claims", None) or {}).get("client") == "speaker":
+            return "speaker"
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from fastmcp.server.dependencies import get_context
         cp = get_context().session.client_params
@@ -63,7 +94,7 @@ def client_name():
 
 
 async def call(name, question, detail, fn):
-    owner_check()
+    owner_check(name)
     client = client_name()
     try:
         res = await asyncio.to_thread(fn)

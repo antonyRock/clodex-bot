@@ -241,7 +241,7 @@ class TestServer(Base):
 
     def test_call_as_owner(self):
         from fastmcp import Client
-        self.S.owner_check = lambda: None
+        self.S.owner_check = lambda *a: None
 
         async def go():
             async with Client(self.mcp) as c:
@@ -255,6 +255,32 @@ class TestServer(Base):
         a, b = self.run_async(go())
         self.assertIn("Просроченное дело", a.content[0].text)
         self.assertIn("закрыты", b)
+
+
+    def test_speaker_token(self):
+        from fastmcp.exceptions import ToolError
+        key = "k" * 40
+        os.environ["CLODEX_SPEAKER_TOKEN"] = key
+        try:
+            v = self.S.speaker_verifier()
+            self.assertIsNone(self.run_async(v.verify_token("неверный")))
+            self.assertIsNone(self.run_async(v.verify_token(key[:-1])))
+            tok = self.run_async(v.verify_token(key))
+            self.assertEqual(tok.claims["client"], "speaker")
+            orig = self.S.get_access_token
+            self.S.get_access_token = lambda: tok
+            try:
+                self.S.owner_check("clodex_read")            # чтение — можно
+                for t in ("clodex_edit", "clodex_write", "clodex_append", "clodex_send_telegram", "clodex_remind"):
+                    with self.assertRaises(ToolError, msg=t):
+                        self.S.owner_check(t)
+                self.assertEqual(self.S.client_name(), "speaker")
+            finally:
+                self.S.get_access_token = orig
+            os.environ["CLODEX_SPEAKER_TOKEN"] = "короткий"
+            self.assertIsNone(self.run_async(v.verify_token("короткий")))   # короткий ключ — выключено
+        finally:
+            os.environ.pop("CLODEX_SPEAKER_TOKEN", None)
 
 
 if __name__ == "__main__":
