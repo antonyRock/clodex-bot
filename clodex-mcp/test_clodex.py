@@ -275,6 +275,13 @@ class TestServer(Base):
                     with self.assertRaises(ToolError, msg=t):
                         self.S.owner_check(t)
                 self.assertEqual(self.S.client_name(), "speaker")
+                os.environ["CLODEX_SPEAKER_WRITE"] = "1"     # владелец разрешил колонке запись
+                try:
+                    self.S.owner_check("clodex_edit")
+                finally:
+                    os.environ.pop("CLODEX_SPEAKER_WRITE", None)
+                with self.assertRaises(ToolError):
+                    self.S.owner_check("clodex_edit")
             finally:
                 self.S.get_access_token = orig
             os.environ["CLODEX_SPEAKER_TOKEN"] = "короткий"

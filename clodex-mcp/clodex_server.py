@@ -6,7 +6,8 @@
   GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET — GitHub OAuth App; CLODEX_ALLOWED_LOGIN — единственный разрешённый логин;
   CLODEX_JWT_KEY — подпись токенов (токены переживают перезапуск); CLODEX_STORE_KEY — ключ Fernet для хранилища клиентов;
   CLODEX_BASE_URL — https://<домен>; TG_TOKEN, MAIL_USER, MAIL_PASS — для Telegram и черновиков писем;
-  CLODEX_SPEAKER_TOKEN — постоянный ключ кухонной колонки (необязательно): с ним — только инструменты чтения.
+  CLODEX_SPEAKER_TOKEN — постоянный ключ голосовой колонки (необязательно): с ним — только инструменты чтения;
+  CLODEX_SPEAKER_WRITE=1 — колонке можно всё, что и приложениям владельца (запись, напоминания и т. д.).
 Правила и порядок работ — «01_План и ТЗ.md» проекта MCP Clodex."""
 import asyncio
 import hmac
@@ -73,8 +74,8 @@ def owner_check(tool=""):
     login = str(claims.get("login", "")).lower()
     if not allowed or not login or login != allowed:
         raise ToolError("Доступ закрыт: коннектор только для владельца.")
-    if claims.get("client") == "speaker" and tool not in SPEAKER_TOOLS:
-        raise ToolError("Кухонной колонке открыто только чтение базы.")
+    if claims.get("client") == "speaker" and tool not in SPEAKER_TOOLS and os.environ.get("CLODEX_SPEAKER_WRITE") != "1":
+        raise ToolError("Колонке открыто только чтение базы.")
 
 
 def client_name():
