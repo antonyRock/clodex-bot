@@ -14,6 +14,8 @@
      не больше NOTIFY_PER_DAY сообщений в сутки;
   5) пишет сводку для личного пульта в /var/www/me/doctor.json (папка /me/ — за входом на сайт); имена устройств — из /root/doctor-stats/labels.json
      ({"<первые 8 символов номера>": "Антон, MacBook Pro"}), пишутся руками.
+  6) POST /log — журнал, который человек сам отправил кнопкой «Отправить журнал разработчику» (до 400 КБ: id, v, model, ram, os, note, mem, lines[]):
+     файл /root/doctor-stats/logs/<время>-<id8>.txt (последние KEEP_LOGS), Антону в Telegram — «пришёл журнал» с кнопкой «Разобрать агентом» (dl:<имя файла>).
 IP-адреса не сохраняются: nginx их в тело не передаёт, сам сервис их не пишет.
 Проверка без сети: doctor_stats.py --selftest
 """
@@ -24,6 +26,9 @@ DATA = os.environ.get("DOCTOR_DATA", "/root/doctor-stats")
 WEB = os.environ.get("DOCTOR_WEB", "/var/www/me/doctor.json")
 PORT = int(os.environ.get("DOCTOR_PORT", "8096"))
 MAX_BODY = 8 * 1024
+MAX_LOG = 400 * 1024
+KEEP_LOGS = 100
+LOG_LINE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")   # управляющие символы вон; остальное — текст журнала (данные, не команды)
 KEEP_DAYS = 90
 KEEP_ERRORS = 200
 NOTIFY_PER_DAY = 8          # защита от потока сообщений: адрес открытый, любой может прислать выдуманную ошибку
@@ -208,6 +213,72 @@ def publish(inst, now):
     atomic_write(WEB, json.dumps(out, ensure_ascii=False))
 
 
+def clean_log(body):
+    """Проверенный журнал или None."""
+    if not isinstance(body, dict):
+        return None
+    i = str(body.get("id", "")).lower()
+    v = str(body.get("v", ""))
+    if not ID_RE.match(i) or not VER_RE.match(v):
+        return None
+    lines = body.get("lines") or []
+    if not isinstance(lines, list):
+        return None
+    try:
+        ram, mem = int(body.get("ram", 0)), int(body.get("mem", 0))
+    except (TypeError, ValueError):
+        ram, mem = 0, 0
+    os_v = str(body.get("os", ""))
+    return {"id": i, "v": v, "model": txt(body.get("model"), 40), "ram": max(0, min(ram, 1024)), "mem": max(-1, min(mem, 100000)),
+            "os": os_v if OS_RE.match(os_v) else "", "note": LOG_LINE.sub(" ", str(body.get("note", "")))[:1000].strip(),
+            "lines": [LOG_LINE.sub(" ", str(x))[:300] for x in lines[-2000:]]}
+
+
+def record_log(rec, now=None):
+    """Сохранить журнал и сообщить Антону. Возвращает имя файла."""
+    now = now or datetime.datetime.now()
+    name = now.strftime("%Y%m%d-%H%M%S") + "-" + rec["id"][:8]
+    d = os.path.join(DATA, "logs")
+    os.makedirs(d, exist_ok=True)
+    who = labels().get(rec["id"][:8], "")
+    head = (f"Журнал Доктора · {now:%Y-%m-%d %H:%M} · v{rec['v']} · {rec['model'] or '?'} · {rec['ram']} ГБ · macOS {rec['os'] or '?'}"
+            + (f" · {who}" if who else "") + f" · установка {rec['id'][:8]} · память Доктора при отправке {rec['mem']} МБ\n"
+            f"Что случилось (слова человека): {rec['note'] or '—'}\n---\n")
+    atomic_write(os.path.join(d, name + ".txt"), head + "\n".join(rec["lines"]) + "\n")
+    old = sorted(f for f in os.listdir(d) if f.endswith(".txt"))
+    for f in old[:-KEEP_LOGS]:
+        try:
+            os.remove(os.path.join(d, f))
+        except OSError:
+            pass
+    threading.Thread(target=notify_log, args=(name, rec, who), daemon=True).start()
+    return name
+
+
+def notify_log(name, rec, who):
+    if not (TG_TOKEN and TG_CHAT):
+        return
+    path = os.path.join(DATA, "notify.json")
+    today = datetime.date.today().isoformat()
+    with lock:
+        st = load(path, {})
+        n = st.get(today, 0)
+        if n >= NOTIFY_PER_DAY:
+            return
+        atomic_write(path, json.dumps({today: n + 1}))
+    hangs = sum(1 for x in rec["lines"] if "ЗАВИСАНИЕ" in x)
+    text = (f"🩺 Доктор Антон: прислали журнал\n"
+            f"v{rec['v']} · {rec['model'] or '?'} · {rec['ram']} ГБ · macOS {rec['os'] or '?'}" + (f" · {who}" if who else f" · установка {rec['id'][:8]}") + "\n"
+            f"Что случилось: {rec['note'][:400] or '—'}\n"
+            f"Строк: {len(rec['lines'])} · зависаний: {hangs} · файл: {name}")
+    data = urllib.parse.urlencode({"chat_id": TG_CHAT, "text": text[:3500], "disable_web_page_preview": "true",
+                                   "reply_markup": json.dumps({"inline_keyboard": [[{"text": "🔍 Разобрать агентом", "callback_data": f"dl:{name}"}]]})}).encode()
+    try:
+        urllib.request.urlopen(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data, timeout=20)
+    except Exception:
+        pass
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "doctor-stats"
 
@@ -222,14 +293,27 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path.split("?")[0] != "/ping":
+        route = self.path.split("?")[0]
+        if route not in ("/ping", "/log"):
             return self._reply(404, b'{"ok":false}')
         try:
             n = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             n = 0
-        if n <= 0 or n > MAX_BODY:
+        if n <= 0 or n > (MAX_LOG if route == "/log" else MAX_BODY):
             return self._reply(413, b'{"ok":false}')
+        if route == "/log":
+            try:
+                lg = clean_log(json.loads(self.rfile.read(n).decode("utf-8")))
+            except (ValueError, UnicodeDecodeError):
+                lg = None
+            if not lg:
+                return self._reply(400, b'{"ok":false}')
+            try:
+                record_log(lg)
+            except OSError:
+                return self._reply(500, b'{"ok":false}')
+            return self._reply(200)
         try:
             rec = clean(json.loads(self.rfile.read(n).decode("utf-8")))
         except (ValueError, UnicodeDecodeError):
@@ -287,6 +371,13 @@ def selftest():
     assert len(rep) == 2 and rep[s1]["count"] == 2 and rep[s1]["versions"] == ["0.7.0", "0.7.3"] and rep[s1]["status"] == "new", rep
     web = json.load(open(WEB))
     assert any(r["sig"] == s1 for r in web["reports"]) and any(i["label"] == "Тест" for i in web["installs"]), web
+    lg = clean_log({"id": good["id"], "v": "0.9.2", "model": "MacBookPro17,1", "ram": 8, "os": "27.0.1", "mem": 300,
+                    "note": "завис\x07 на корзине", "lines": ["11-20 00:00:01 экран: dup", "⚠️ ЗАВИСАНИЕ: окно не отвечает 5 с\x1b[31m"]})
+    assert lg and lg["note"] == "завис  на корзине" and "\x1b" not in lg["lines"][1], lg
+    assert clean_log({**lg, "id": "bad"}) is None and clean_log({**lg, "lines": "x"}) is None
+    nm = record_log(lg, t)
+    body = open(os.path.join(DATA, "logs", nm + ".txt"), encoding="utf-8").read()
+    assert "ЗАВИСАНИЕ" in body and "Тест" in body.splitlines()[0], body
     print("selftest OK")
 
 
