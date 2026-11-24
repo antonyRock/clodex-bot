@@ -127,6 +127,8 @@ def main():
     if any(rel.endswith(("vpn_stats.py", "vpn-stats.timer", "vpn-stats.service")) for rel, _ in changes) \
             and os.path.exists("/usr/local/bin/xray"):
         run("systemctl", "enable", "--now", "vpn-stats.timer")   # статистика VPN — только если стоит Xray
+    if any(rel.endswith(("ai-news.timer", "ai-news.service")) for rel, _ in changes):
+        run("systemctl", "enable", "--now", "ai-news.timer")   # новости ИИ в 11:00
     if "bot" in parts or "systemd" in parts:
         run("systemctl", "restart", "tg-bot")   # остальные скрипты запускаются таймерами — подхватят сами
     time.sleep(3)

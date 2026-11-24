@@ -1,0 +1,11 @@
+[Unit]
+Description=AI news digest to Telegram (five main AI news of the day)
+[Service]
+Type=oneshot
+WorkingDirectory=/root/tg-bot
+EnvironmentFile=/root/.config/tg-bot.env
+EnvironmentFile=/root/.config/claude-token
+Environment=TG_ALLOWED=__TG_ID__
+Environment=HOME=/root
+ExecStart=/usr/bin/python3 /root/tg-bot/ai_news.py
+TimeoutStartSec=1800
