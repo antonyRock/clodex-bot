@@ -288,7 +288,10 @@ def tasks(sphere="", project="", due_before="", waiting_for_anton=False, include
     today = now().date()
     items = parse_tasks(sphere)
     out = []
+    ideas = sum(1 for t in items if t["status"] == "*")
     for t in items:
+        if t["status"] == "*":   # бэклог (2026-11-25): идея на потом в тех же файлах, не дело
+            continue
         if t["status"] in "x-" and not include_done:
             continue
         if project and t["project"].lower() != project.strip().lower():
@@ -306,7 +309,8 @@ def tasks(sphere="", project="", due_before="", waiting_for_anton=False, include
     out.sort(key=lambda t: (t["date"] is None, t["date"] or today, t["id"]))
     over = sum(1 for t in out if t["date"] and t["date"] < today)
     head = (f"Сегодня {today:%Y-%m-%d}. Дел по фильтру: {len(out)} (просрочено: {over}). "
-            "Номера дел служебные — __ИМЯ_Д__ называйте дело текстом, не номером.")
+            "Номера дел служебные — __ИМЯ_Д__ называйте дело текстом, не номером."
+            + (f" Идей в бэклоге (статус [*], не дела, без срока): {ideas}." if ideas else ""))
     body = grouped(out[:limit])
     return head + "\n" + (body or "(нет)") + (f"\n… ещё {len(out) - limit}" if len(out) > limit else "")
 
@@ -336,7 +340,7 @@ def start():
     root = os.path.join(A.WORKDIR, "CLAUDE.md")
     parts.append("== ОБЩИЕ ПРАВИЛА АГЕНТА (корневой CLAUDE.md) ==\n" +
                  (open(root, encoding="utf-8").read() if os.path.isfile(root) else "(CLAUDE.md не найден)"))
-    due = [x for x in parse_tasks() if x["status"] not in "x-" and x["date"] and x["date"] <= today]
+    due = [x for x in parse_tasks() if x["status"] not in "x-*" and x["date"] and x["date"] <= today]
     due.sort(key=lambda x: (x["date"], x["id"]))
     parts.append("== ДЕЛА: просрочено и на сегодня (по сферам; отвечая, не смешивай личные, рабочие и системные) ==\n" + (grouped(due[:25]) or "(нет)"))
     ev = events(14)
