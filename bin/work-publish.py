@@ -9,6 +9,31 @@ NAME = re.compile(r"(Clodex\.Work|Пульт .+) v(\d+)\.html")
 # Короткие постоянные адреса: /work/<адрес>/ всегда показывает свежую vN этой страницы — адрес не меняется
 # с каждой новой версией (просьба владельца, 2026-11-27). Глубина та же, что у папки проекта, поэтому ссылки "../" работают.
 ALIASES = {"Пульт Payment Events": "payment-events"}
+# Открытые копии для коллег — по секретной ссылке /p/<токен>/ без входа (просьба владельца, 2026-11-28: «главное,
+# чтобы они никак не вышли на мой рабочий ворк»). Копия делается из той же свежей vN, поэтому вид и данные у неё
+# всегда те же, что у рабочей страницы. Из копии убираются «Зачем мне» (поле why — рабочие планы), ссылка назад на
+# Clodex.Work и комментарии в HTML. Если после чистки в странице остался след рабочего сайта — копия НЕ обновляется
+# (остаётся прежняя), в журнал службы пишется причина.
+PUBLIC = {"Пульт Payment Events": "__ССЫЛКА_МЕРОПРИЯТИЙ__"}
+PDST = pathlib.Path("/var/www/p")
+FORBID = re.compile(r'href="\.\./|href="/|/work|Clodex\.Work|Зачем мне|"why"\s*:\s*"[^"]|__ИМЯ__|__ИМЯ_Р__|__ИМЯ_Д__')
+
+
+def public_copy(src):
+    """Страница для коллег или None, если вычистить рабочее не удалось."""
+    s = src.read_text(encoding="utf-8")
+    s = re.sub(r"<!--.*?-->", "", s, flags=re.S)                                  # служебные заметки в начале страницы
+    s = re.sub(r'<a class="back"[^>]*>.*?</a>', "", s, flags=re.S)                # «← Clodex.Work»
+    s = re.sub(r'"why"\s*:\s*"(?:[^"\\]|\\.)*"', '"why":""', s)                # данные «Зачем мне»
+    s = re.sub(r'\$\{row\("Зачем мне",[^}]*\)\}', "", s)                         # строка «Зачем мне» в карточке
+    s = s.replace('"topic","why",', '"topic",')                                    # столбец в CSV
+    s = s.replace("Clodex · мероприятия", "Мероприятия")
+    s = s.replace("<head>", '<head>\n<meta name="robots" content="noindex, nofollow">', 1)
+    bad = FORBID.search(s)
+    if bad:
+        print(f"ВНИМАНИЕ: открытая копия {src.name} не обновлена — осталось «{bad.group(0)}»")
+        return None
+    return s
 
 latest = {}   # (папка, имя) → (версия, файл)
 allv = {}     # (папка, имя) → [(версия, файл)] — для архива версий
@@ -36,6 +61,13 @@ for (folder, name), (_, p) in latest.items():
         out = DST / ALIASES[name] / "index.html"
         put(p, out)
         keep.add(out)
+    if name in PUBLIC:
+        html = public_copy(p)
+        if html is not None:
+            out = PDST / PUBLIC[name] / "index.html"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if not out.exists() or out.read_text(encoding="utf-8") != html:
+                tmp = out.with_suffix(".tmp"); tmp.write_text(html, encoding="utf-8"); os.chmod(tmp, 0o644); tmp.replace(out)
 for f in DST.glob("*/*.html"):   # старые версии убираем, чтобы по сайту не ходили устаревшие пульты
     if f not in keep:
         f.unlink()
