@@ -6,6 +6,9 @@ KEEP_VERSIONS = 20   # сколько последних версий каждо
 SRC = pathlib.Path("__WORKDIR__/__ПАПКА_РАБОЧЕГО_ПУЛЬТА__").parent   # папка рабочих проектов
 DST = pathlib.Path("/var/www/work")
 NAME = re.compile(r"(Clodex\.Work|Пульт .+) v(\d+)\.html")
+# Короткие постоянные адреса: /work/<адрес>/ всегда показывает свежую vN этой страницы — адрес не меняется
+# с каждой новой версией (просьба владельца, 2026-11-27). Глубина та же, что у папки проекта, поэтому ссылки "../" работают.
+ALIASES = {"Пульт Payment Events": "payment-events"}
 
 latest = {}   # (папка, имя) → (версия, файл)
 allv = {}     # (папка, имя) → [(версия, файл)] — для архива версий
@@ -29,6 +32,10 @@ for (folder, name), (_, p) in latest.items():
     keep.add(out)
     if name == "Clodex.Work":
         home = f"{folder}/{p.name}"
+    if name in ALIASES:
+        out = DST / ALIASES[name] / "index.html"
+        put(p, out)
+        keep.add(out)
 for f in DST.glob("*/*.html"):   # старые версии убираем, чтобы по сайту не ходили устаревшие пульты
     if f not in keep:
         f.unlink()
