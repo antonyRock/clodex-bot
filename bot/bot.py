@@ -636,7 +636,7 @@ def deliver(chat, text, engine):
     chatlog(f"агент ({NAMES[engine]})", text + "".join(f"\n(файл: {p})" for p in paths))
     if text:
         warn = limits_text(warn_only=True) if engine == "claude" else ""
-        ids = send(chat, f"🟡 **Clodex** · {NAMES[engine]}\n{text}" + (f"\n\n{warn}" if warn else ""), html=True, button=True)
+        ids = send(chat, text + (f"\n\n{warn}" if warn else ""), html=True, button=True)
         remember(chat, ids, engine)
     if draft:
         if not re.fullmatch(r"[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+", draft["to"]):
